@@ -15,7 +15,7 @@ import (
 // 受支持平台（含国产供应商）的 API-key 账号都可开启探测；OAuth/Bedrock 无静态 Key 仍不合格。
 func TestUpstreamBillingProbeIdentityCoversAllAPIKeyPlatforms(t *testing.T) {
 	for _, platform := range []string{
-		PlatformOpenAI, PlatformGrok, PlatformAnthropic, PlatformGemini, PlatformAntigravity,
+		PlatformOpenAI, PlatformGrok, PlatformAnthropic, PlatformGemini, PlatformAntigravity, PlatformKiro,
 		PlatformKimi, PlatformZhipu, PlatformDeepseek,
 	} {
 		require.True(t, IsUpstreamBillingProbeIdentity(platform, AccountTypeAPIKey), platform)
@@ -23,10 +23,58 @@ func TestUpstreamBillingProbeIdentityCoversAllAPIKeyPlatforms(t *testing.T) {
 	}
 	require.False(t, IsUpstreamBillingProbeIdentity(PlatformOpenAI, AccountTypeOAuth))
 	require.False(t, IsUpstreamBillingProbeIdentity(PlatformGrok, AccountTypeOAuth))
+	require.False(t, IsUpstreamBillingProbeIdentity(PlatformKiro, AccountTypeOAuth))
 	require.False(t, IsUpstreamBillingProbeIdentity(PlatformAnthropic, AccountTypeBedrock))
 	require.False(t, IsUpstreamBillingProbeIdentity("", AccountTypeAPIKey))
 	require.False(t, IsUpstreamBillingProbeIdentity("future-platform", AccountTypeAPIKey))
 	require.False(t, isUpstreamBillingProbeAccount(nil))
+}
+
+func TestUpstreamBillingProbeKiroRelayPersistsSnapshot(t *testing.T) {
+	account := &Account{
+		ID:       153,
+		Platform: PlatformKiro,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"api_key":  "ksk-test",
+			"base_url": "https://relay.example/v1",
+		},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       upstreamBillingProbeValidBody(),
+	}}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
+	require.Equal(t, "https://relay.example/v1/sub2api/billing", upstream.lastReq.URL.String())
+	require.Equal(t, "Bearer ksk-test", upstream.lastReq.Header.Get("Authorization"))
+	require.Equal(t, HTTPUpstreamProfileDefault, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
+	require.Equal(t, UpstreamBillingProbeStatusOK, decodeUpstreamBillingProbeSnapshot(account.Extra).Status)
+}
+
+// Kiro 直连凭据没有 base_url，探测应直接记录 unsupported，不能向 AWS 发请求。
+func TestUpstreamBillingProbeKiroDirectIsUnsupportedWithoutRequest(t *testing.T) {
+	account := &Account{
+		ID:          154,
+		Platform:    PlatformKiro,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Credentials: map[string]any{"api_key": "ksk-direct"},
+	}
+	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
+	upstream := &httpUpstreamRecorder{}
+	svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+
+	snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
+	require.NoError(t, err)
+	require.Equal(t, UpstreamBillingProbeStatusUnsupported, snapshot.Status)
+	require.Nil(t, upstream.lastReq)
 }
 
 func upstreamBillingProbeValidBody() io.ReadCloser {
@@ -212,7 +260,7 @@ func TestUpstreamBillingProbeOpenAIDefaultBaseURLPreserved(t *testing.T) {
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
 }
 
-func TestUpstreamBillingProbeSetAccountEnabledAcceptsGrokAPIKey(t *testing.T) {
+func TestUpstreamBillingProbeSetAccountEnabledAcceptsSupportedAPIKeys(t *testing.T) {
 	grokAPIKey := &Account{
 		ID:          151,
 		Platform:    PlatformGrok,
@@ -221,9 +269,19 @@ func TestUpstreamBillingProbeSetAccountEnabledAcceptsGrokAPIKey(t *testing.T) {
 		Credentials: map[string]any{"api_key": "sk", "base_url": "https://relay.example"},
 	}
 	grokOAuth := &Account{ID: 152, Platform: PlatformGrok, Type: AccountTypeOAuth, Status: StatusActive}
+	kiroAPIKey := &Account{
+		ID:          153,
+		Platform:    PlatformKiro,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Credentials: map[string]any{"api_key": "ksk"},
+	}
+	kiroOAuth := &Account{ID: 154, Platform: PlatformKiro, Type: AccountTypeOAuth, Status: StatusActive}
 	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
 		grokAPIKey.ID: grokAPIKey,
 		grokOAuth.ID:  grokOAuth,
+		kiroAPIKey.ID: kiroAPIKey,
+		kiroOAuth.ID:  kiroOAuth,
 	}}
 	svc := newUpstreamBillingProbeTestService(repo, &upstreamBillingProbeHTTPStub{}, &upstreamBillingProbeSettingRepo{})
 
@@ -231,5 +289,11 @@ func TestUpstreamBillingProbeSetAccountEnabledAcceptsGrokAPIKey(t *testing.T) {
 	require.Equal(t, true, repo.accounts[grokAPIKey.ID].Extra[UpstreamBillingProbeEnabledExtraKey])
 
 	err := svc.SetAccountEnabled(context.Background(), grokOAuth.ID, true)
+	require.ErrorIs(t, err, ErrUpstreamBillingProbeAccountInvalid)
+
+	require.NoError(t, svc.SetAccountEnabled(context.Background(), kiroAPIKey.ID, true))
+	require.Equal(t, true, repo.accounts[kiroAPIKey.ID].Extra[UpstreamBillingProbeEnabledExtraKey])
+
+	err = svc.SetAccountEnabled(context.Background(), kiroOAuth.ID, true)
 	require.ErrorIs(t, err, ErrUpstreamBillingProbeAccountInvalid)
 }

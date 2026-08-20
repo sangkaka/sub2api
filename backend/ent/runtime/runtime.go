@@ -30,6 +30,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/pendingauthsession"
 	"github.com/Wei-Shaw/sub2api/ent/promocode"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
+	"github.com/Wei-Shaw/sub2api/ent/promptrule"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/schema"
@@ -1193,16 +1194,52 @@ func init() {
 	groupDescReasoningEffortMappings := groupFields[55].Descriptor()
 	// group.DefaultReasoningEffortMappings holds the default value on creation for the reasoning_effort_mappings field.
 	group.DefaultReasoningEffortMappings = groupDescReasoningEffortMappings.Default.([]domain.ReasoningEffortMapping)
+	// groupDescKiroCacheEmulationEnabled is the schema descriptor for kiro_cache_emulation_enabled field.
+	groupDescKiroCacheEmulationEnabled := groupFields[56].Descriptor()
+	// group.DefaultKiroCacheEmulationEnabled holds the default value on creation for the kiro_cache_emulation_enabled field.
+	group.DefaultKiroCacheEmulationEnabled = groupDescKiroCacheEmulationEnabled.Default.(bool)
+	// groupDescKiroAutoStickyEnabled is the schema descriptor for kiro_auto_sticky_enabled field.
+	groupDescKiroAutoStickyEnabled := groupFields[57].Descriptor()
+	// group.DefaultKiroAutoStickyEnabled holds the default value on creation for the kiro_auto_sticky_enabled field.
+	group.DefaultKiroAutoStickyEnabled = groupDescKiroAutoStickyEnabled.Default.(bool)
+	// groupDescKiroStickySessionTTLSeconds is the schema descriptor for kiro_sticky_session_ttl_seconds field.
+	groupDescKiroStickySessionTTLSeconds := groupFields[58].Descriptor()
+	// group.DefaultKiroStickySessionTTLSeconds holds the default value on creation for the kiro_sticky_session_ttl_seconds field.
+	group.DefaultKiroStickySessionTTLSeconds = groupDescKiroStickySessionTTLSeconds.Default.(int)
+	// groupDescKiroCacheEmulationRatio is the schema descriptor for kiro_cache_emulation_ratio field.
+	groupDescKiroCacheEmulationRatio := groupFields[59].Descriptor()
+	// group.DefaultKiroCacheEmulationRatio holds the default value on creation for the kiro_cache_emulation_ratio field.
+	group.DefaultKiroCacheEmulationRatio = groupDescKiroCacheEmulationRatio.Default.(float64)
+	// groupDescKiroCacheEmulationMode is the schema descriptor for kiro_cache_emulation_mode field.
+	groupDescKiroCacheEmulationMode := groupFields[60].Descriptor()
+	// group.DefaultKiroCacheEmulationMode holds the default value on creation for the kiro_cache_emulation_mode field.
+	group.DefaultKiroCacheEmulationMode = groupDescKiroCacheEmulationMode.Default.(string)
+	// group.KiroCacheEmulationModeValidator is a validator for the "kiro_cache_emulation_mode" field. It is called by the builders before save.
+	group.KiroCacheEmulationModeValidator = groupDescKiroCacheEmulationMode.Validators[0].(func(string) error)
+	// groupDescKiroCacheCreationEmulationRatio is the schema descriptor for kiro_cache_creation_emulation_ratio field.
+	groupDescKiroCacheCreationEmulationRatio := groupFields[61].Descriptor()
+	// group.DefaultKiroCacheCreationEmulationRatio holds the default value on creation for the kiro_cache_creation_emulation_ratio field.
+	group.DefaultKiroCacheCreationEmulationRatio = groupDescKiroCacheCreationEmulationRatio.Default.(float64)
+	// groupDescKiroCacheReadEmulationRatio is the schema descriptor for kiro_cache_read_emulation_ratio field.
+	groupDescKiroCacheReadEmulationRatio := groupFields[62].Descriptor()
+	// group.DefaultKiroCacheReadEmulationRatio holds the default value on creation for the kiro_cache_read_emulation_ratio field.
+	group.DefaultKiroCacheReadEmulationRatio = groupDescKiroCacheReadEmulationRatio.Default.(float64)
+	// groupDescKiroEndpointMode is the schema descriptor for kiro_endpoint_mode field.
+	groupDescKiroEndpointMode := groupFields[63].Descriptor()
+	// group.DefaultKiroEndpointMode holds the default value on creation for the kiro_endpoint_mode field.
+	group.DefaultKiroEndpointMode = groupDescKiroEndpointMode.Default.(string)
+	// group.KiroEndpointModeValidator is a validator for the "kiro_endpoint_mode" field. It is called by the builders before save.
+	group.KiroEndpointModeValidator = groupDescKiroEndpointMode.Validators[0].(func(string) error)
 	// groupDescProfitControlEnabled is the schema descriptor for profit_control_enabled field.
-	groupDescProfitControlEnabled := groupFields[56].Descriptor()
+	groupDescProfitControlEnabled := groupFields[64].Descriptor()
 	// group.DefaultProfitControlEnabled holds the default value on creation for the profit_control_enabled field.
 	group.DefaultProfitControlEnabled = groupDescProfitControlEnabled.Default.(bool)
 	// groupDescProfitMinMargin is the schema descriptor for profit_min_margin field.
-	groupDescProfitMinMargin := groupFields[57].Descriptor()
+	groupDescProfitMinMargin := groupFields[65].Descriptor()
 	// group.DefaultProfitMinMargin holds the default value on creation for the profit_min_margin field.
 	group.DefaultProfitMinMargin = groupDescProfitMinMargin.Default.(float64)
 	// groupDescProfitSafetyBuffer is the schema descriptor for profit_safety_buffer field.
-	groupDescProfitSafetyBuffer := groupFields[58].Descriptor()
+	groupDescProfitSafetyBuffer := groupFields[66].Descriptor()
 	// group.DefaultProfitSafetyBuffer holds the default value on creation for the profit_safety_buffer field.
 	group.DefaultProfitSafetyBuffer = groupDescProfitSafetyBuffer.Default.(float64)
 	idempotencyrecordMixin := schema.IdempotencyRecord{}.Mixin()
@@ -1602,6 +1639,69 @@ func init() {
 	promocodeusageDescUsedAt := promocodeusageFields[3].Descriptor()
 	// promocodeusage.DefaultUsedAt holds the default value on creation for the used_at field.
 	promocodeusage.DefaultUsedAt = promocodeusageDescUsedAt.Default.(func() time.Time)
+	promptruleMixin := schema.PromptRule{}.Mixin()
+	promptruleMixinFields0 := promptruleMixin[0].Fields()
+	_ = promptruleMixinFields0
+	promptruleFields := schema.PromptRule{}.Fields()
+	_ = promptruleFields
+	// promptruleDescCreatedAt is the schema descriptor for created_at field.
+	promptruleDescCreatedAt := promptruleMixinFields0[0].Descriptor()
+	// promptrule.DefaultCreatedAt holds the default value on creation for the created_at field.
+	promptrule.DefaultCreatedAt = promptruleDescCreatedAt.Default.(func() time.Time)
+	// promptruleDescUpdatedAt is the schema descriptor for updated_at field.
+	promptruleDescUpdatedAt := promptruleMixinFields0[1].Descriptor()
+	// promptrule.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	promptrule.DefaultUpdatedAt = promptruleDescUpdatedAt.Default.(func() time.Time)
+	// promptrule.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	promptrule.UpdateDefaultUpdatedAt = promptruleDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// promptruleDescName is the schema descriptor for name field.
+	promptruleDescName := promptruleFields[0].Descriptor()
+	// promptrule.NameValidator is a validator for the "name" field. It is called by the builders before save.
+	promptrule.NameValidator = func() func(string) error {
+		validators := promptruleDescName.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(name string) error {
+			for _, fn := range fns {
+				if err := fn(name); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// promptruleDescEnabled is the schema descriptor for enabled field.
+	promptruleDescEnabled := promptruleFields[2].Descriptor()
+	// promptrule.DefaultEnabled holds the default value on creation for the enabled field.
+	promptrule.DefaultEnabled = promptruleDescEnabled.Default.(bool)
+	// promptruleDescOrder is the schema descriptor for order field.
+	promptruleDescOrder := promptruleFields[3].Descriptor()
+	// promptrule.DefaultOrder holds the default value on creation for the order field.
+	promptrule.DefaultOrder = promptruleDescOrder.Default.(int)
+	// promptruleDescRole is the schema descriptor for role field.
+	promptruleDescRole := promptruleFields[4].Descriptor()
+	// promptrule.DefaultRole holds the default value on creation for the role field.
+	promptrule.DefaultRole = promptruleDescRole.Default.(string)
+	// promptrule.RoleValidator is a validator for the "role" field. It is called by the builders before save.
+	promptrule.RoleValidator = promptruleDescRole.Validators[0].(func(string) error)
+	// promptruleDescContent is the schema descriptor for content field.
+	promptruleDescContent := promptruleFields[5].Descriptor()
+	// promptrule.ContentValidator is a validator for the "content" field. It is called by the builders before save.
+	promptrule.ContentValidator = promptruleDescContent.Validators[0].(func(string) error)
+	// promptruleDescAction is the schema descriptor for action field.
+	promptruleDescAction := promptruleFields[6].Descriptor()
+	// promptrule.DefaultAction holds the default value on creation for the action field.
+	promptrule.DefaultAction = promptruleDescAction.Default.(string)
+	// promptrule.ActionValidator is a validator for the "action" field. It is called by the builders before save.
+	promptrule.ActionValidator = promptruleDescAction.Validators[0].(func(string) error)
+	// promptruleDescMatchMode is the schema descriptor for match_mode field.
+	promptruleDescMatchMode := promptruleFields[8].Descriptor()
+	// promptrule.DefaultMatchMode holds the default value on creation for the match_mode field.
+	promptrule.DefaultMatchMode = promptruleDescMatchMode.Default.(string)
+	// promptrule.MatchModeValidator is a validator for the "match_mode" field. It is called by the builders before save.
+	promptrule.MatchModeValidator = promptruleDescMatchMode.Validators[0].(func(string) error)
 	proxyMixin := schema.Proxy{}.Mixin()
 	proxyMixinHooks1 := proxyMixin[1].Hooks()
 	proxy.Hooks[0] = proxyMixinHooks1[0]

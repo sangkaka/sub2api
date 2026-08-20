@@ -958,7 +958,7 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 			modelPricing = nil
 		}
 	}
-	return &service.Group{
+	out := &service.Group{
 		ID:                              g.ID,
 		Name:                            g.Name,
 		Description:                     derefString(g.Description),
@@ -1013,6 +1013,14 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		RPMLimit:                        g.RpmLimit,
 		MaxReasoningEffort:              g.MaxReasoningEffort,
 		ReasoningEffortMappings:         g.ReasoningEffortMappings,
+		KiroCacheEmulationEnabled:       g.KiroCacheEmulationEnabled,
+		KiroAutoStickyEnabled:           g.KiroAutoStickyEnabled,
+		KiroStickySessionTTLSeconds:     g.KiroStickySessionTTLSeconds,
+		KiroCacheEmulationRatio:         g.KiroCacheEmulationRatio,
+		KiroCacheEmulationMode:          g.KiroCacheEmulationMode,
+		KiroCacheCreationEmulationRatio: g.KiroCacheCreationEmulationRatio,
+		KiroCacheReadEmulationRatio:     g.KiroCacheReadEmulationRatio,
+		KiroEndpointMode:                g.KiroEndpointMode,
 		PeakRateEnabled:                 g.PeakRateEnabled,
 		PeakStart:                       g.PeakStart,
 		PeakEnd:                         g.PeakEnd,
@@ -1023,6 +1031,8 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		CreatedAt:                       g.CreatedAt,
 		UpdatedAt:                       g.UpdatedAt,
 	}
+	service.NormalizeGroupRuntimeFields(out)
+	return out
 }
 
 func derefString(s *string) string {

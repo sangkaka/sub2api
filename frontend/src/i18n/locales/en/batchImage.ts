@@ -207,6 +207,8 @@ export default {
       errorCodeRef: 'code: {code}',
       requestIdRef: 'request ID: {id}',
       httpStatusRef: 'HTTP status: {status}',
+      cancelTitle: 'Cancel job',
+      deleteTitle: 'Delete record',
     },
   },
 }

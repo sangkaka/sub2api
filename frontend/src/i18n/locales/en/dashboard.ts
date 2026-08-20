@@ -800,6 +800,7 @@ export default {
       loadFailed: 'Failed to load passkeys.',
       added: 'Passkey added.',
       addFailed: 'Failed to add passkey.',
+      renameTitle: 'Rename passkey',
       renamePrompt: 'Enter a new name for this passkey',
       renamed: 'Passkey renamed.',
       renameFailed: 'Failed to rename passkey.',

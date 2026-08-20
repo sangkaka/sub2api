@@ -34,22 +34,27 @@
       <div class="grid gap-3 sm:grid-cols-2">
         <label class="text-xs text-gray-600 dark:text-dark-200">
           <span>{{ t('admin.promptAudit.events.decision') }}</span>
-          <select v-model="local.decision" class="input mt-1 w-full" :aria-label="t('admin.promptAudit.events.decision')" data-test="delete-decision" @change="criteriaChanged">
-            <option value="">{{ t('common.all') }}</option>
-            <option value="pass">{{ t('admin.promptAudit.decisions.pass') }}</option>
-            <option value="flag">{{ t('admin.promptAudit.decisions.flag') }}</option>
-            <option value="critical">{{ t('admin.promptAudit.decisions.critical') }}</option>
-          </select>
+          <Select
+            v-model="local.decision"
+            :options="decisionOptions"
+            size="sm"
+            class="mt-1"
+            :aria-label="t('admin.promptAudit.events.decision')"
+            data-test="delete-decision"
+            @change="criteriaChanged"
+          />
         </label>
         <label class="text-xs text-gray-600 dark:text-dark-200">
           <span>{{ t('admin.promptAudit.events.risk') }}</span>
-          <select v-model="local.risk_level" class="input mt-1 w-full" :aria-label="t('admin.promptAudit.events.risk')" data-test="delete-risk" @change="criteriaChanged">
-            <option value="">{{ t('common.all') }}</option>
-            <option value="low">{{ t('admin.promptAudit.riskLevels.low') }}</option>
-            <option value="medium">{{ t('admin.promptAudit.riskLevels.medium') }}</option>
-            <option value="high">{{ t('admin.promptAudit.riskLevels.high') }}</option>
-            <option value="critical">{{ t('admin.promptAudit.riskLevels.critical') }}</option>
-          </select>
+          <Select
+            v-model="local.risk_level"
+            :options="riskLevelOptions"
+            size="sm"
+            class="mt-1"
+            :aria-label="t('admin.promptAudit.events.risk')"
+            data-test="delete-risk"
+            @change="criteriaChanged"
+          />
         </label>
       </div>
 
@@ -120,6 +125,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import Select from '@/components/common/Select.vue'
 import type { PromptDeletePreview, PromptEventFilters } from '../types'
 import {
   DELETE_RANGE_PRESETS,
@@ -144,6 +150,20 @@ const emit = defineEmits<{
   (event: 'criteria-change'): void
 }>()
 const { t, locale } = useI18n()
+
+const decisionOptions = computed(() => [
+  { value: '', label: t('common.all') },
+  { value: 'pass', label: t('admin.promptAudit.decisions.pass') },
+  { value: 'flag', label: t('admin.promptAudit.decisions.flag') },
+  { value: 'critical', label: t('admin.promptAudit.decisions.critical') },
+])
+const riskLevelOptions = computed(() => [
+  { value: '', label: t('common.all') },
+  { value: 'low', label: t('admin.promptAudit.riskLevels.low') },
+  { value: 'medium', label: t('admin.promptAudit.riskLevels.medium') },
+  { value: 'high', label: t('admin.promptAudit.riskLevels.high') },
+  { value: 'critical', label: t('admin.promptAudit.riskLevels.critical') },
+])
 
 const preset = ref<DeleteRangePreset>('7d')
 const local = reactive<PromptEventFilters>(emptyEventFilters())

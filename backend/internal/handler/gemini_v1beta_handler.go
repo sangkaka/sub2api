@@ -212,6 +212,10 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		return
 	}
 
+	if action == "generateContent" || action == "streamGenerateContent" {
+		body = injectMatchingPromptRules(reqLog, h.promptRuleService, apiKey.GroupID, modelName, service.PromptRuleProtocolGemini, body)
+	}
+
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, modelName)
 	reqModel := modelName // 保存映射前的原始模型名

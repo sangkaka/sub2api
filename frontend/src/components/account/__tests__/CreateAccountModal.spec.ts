@@ -8,12 +8,14 @@ const {
   importCodexSessionMock,
   createOpenAICodexPATMock,
   authIsSimpleMode,
+  generateKiroIDCAuthUrlMock,
 } = vi.hoisted(() => ({
   createAccountMock: vi.fn(),
   probeUpstreamBillingMock: vi.fn(),
   importCodexSessionMock: vi.fn(),
   createOpenAICodexPATMock: vi.fn(),
   authIsSimpleMode: { value: true },
+  generateKiroIDCAuthUrlMock: vi.fn(),
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -48,6 +50,9 @@ vi.mock('@/api/admin', () => ({
     tlsFingerprintProfiles: {
       list: vi.fn().mockResolvedValue([]),
     },
+    kiro: {
+      generateIDCAuthUrl: generateKiroIDCAuthUrlMock,
+    },
   },
 }))
 
@@ -81,9 +86,10 @@ const OAuthAuthorizationFlowStub = defineComponent({
     initialInputMethod: String,
   },
   data: () => ({ inputMethod: 'manual' }),
-  emits: ['import-codex-session', 'import-codex-pat'],
+  emits: ['generate-url', 'import-codex-session', 'import-codex-pat'],
   template: `
     <div>
+      <button data-testid="generate-url" @click="$emit('generate-url')">generate</button>
       <button data-testid="import-codex-session" @click="$emit('import-codex-session', 'session-json')">session</button>
       <button data-testid="import-codex-pat" @click="$emit('import-codex-pat', 'pat-token')">pat</button>
     </div>
@@ -110,6 +116,32 @@ const GroupSelectorStub = defineComponent({
   `,
 })
 
+const SelectStub = defineComponent({
+  name: 'SelectStub',
+  props: {
+    modelValue: {
+      type: [String, Number, Boolean, null],
+      default: ''
+    },
+    options: {
+      type: Array,
+      default: () => []
+    }
+  },
+  emits: ['update:modelValue', 'change'],
+  template: `
+    <select
+      v-bind="$attrs"
+      :value="modelValue"
+      @change="$emit('update:modelValue', $event.target.value); $emit('change', $event.target.value, null)"
+    >
+      <option v-for="option in options" :key="option.value" :value="option.value">
+        {{ option.label }}
+      </option>
+    </select>
+  `
+})
+
 function mountModal(groups: any[] = []) {
   return mount(CreateAccountModal, {
     props: { show: true, proxies: [], groups },
@@ -118,7 +150,7 @@ function mountModal(groups: any[] = []) {
         BaseDialog: BaseDialogStub,
         OAuthAuthorizationFlow: OAuthAuthorizationFlowStub,
         ConfirmDialog: true,
-        Select: true,
+        Select: SelectStub,
         Icon: true,
         PlatformIcon: true,
         ProxySelector: true,
@@ -138,13 +170,18 @@ async function selectButtonByText(wrapper: ReturnType<typeof mountModal>, text: 
 }
 
 async function submitApiKeyAccount(
-  platform: 'openai' | 'anthropic',
+  platform: 'openai' | 'anthropic' | 'kiro',
   enableLongContextBilling = false,
   disableUpstreamBillingProbe = false
 ) {
   const wrapper = mountModal()
-  await selectButtonByText(wrapper, platform === 'openai' ? 'OpenAI' : 'admin.accounts.claudeConsole')
-  if (platform === 'openai') {
+  const platformLabel = {
+    openai: 'OpenAI',
+    anthropic: 'admin.accounts.claudeConsole',
+    kiro: 'Kiro'
+  }[platform]
+  await selectButtonByText(wrapper, platformLabel)
+  if (platform === 'openai' || platform === 'kiro') {
     await selectButtonByText(wrapper, 'API Key')
   }
   await wrapper.get('form#create-account-form input[type="text"]').setValue(`${platform} account`)
@@ -185,6 +222,11 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       warnings: [],
     })
     createOpenAICodexPATMock.mockReset().mockResolvedValue({})
+    generateKiroIDCAuthUrlMock.mockReset().mockResolvedValue({
+      auth_url: 'https://kiro.example/auth',
+      session_id: 'kiro-session',
+      state: 'kiro-state',
+    })
   })
 
   it('hides only the redundant account toggle when every selected group enables tier pricing', async () => {
@@ -319,6 +361,87 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(createAccountMock.mock.calls[0]?.[0]?.upstream_billing_probe_enabled).toBe(false)
   })
 
+  it('creates a Kiro direct API-key account with upstream billing probe disabled by default', async () => {
+    await submitApiKeyAccount('kiro')
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload?.platform).toBe('kiro')
+    expect(payload?.type).toBe('apikey')
+    expect(payload?.credentials?.api_key).toBe('test-api-key')
+    expect(payload?.credentials?.api_region).toBe('us-east-1')
+    expect(payload?.upstream_billing_probe_enabled).toBe(false)
+    expect(probeUpstreamBillingMock).not.toHaveBeenCalled()
+  })
+
+  it('creates a Kiro external relay API-key account with upstream billing probe enabled by default', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Kiro')
+    await selectButtonByText(wrapper, 'API Key + Base URL')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('kiro relay account')
+    const baseUrlInput = wrapper
+      .findAll('input')
+      .find((candidate) => candidate.attributes('placeholder') === 'https://your-relay.example.com')
+    expect(baseUrlInput).toBeDefined()
+    await baseUrlInput?.setValue('https://relay.example')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload?.platform).toBe('kiro')
+    expect(payload?.type).toBe('apikey')
+    expect(payload?.credentials?.base_url).toBe('https://relay.example')
+    expect(payload?.upstream_billing_probe_enabled).toBe(true)
+    expect(probeUpstreamBillingMock).toHaveBeenCalledWith(42)
+  })
+
+  it('creates a Kiro API-key account with the selected API region', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Kiro')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('kiro eu account')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('ksk-eu')
+    const regionSelect = wrapper.get<HTMLSelectElement>('[data-testid="kiro-api-region-select"]')
+    expect(regionSelect.element.value).toBe('us-east-1')
+    expect(regionSelect.find('option[value="eu-central-1"]').exists()).toBe(true)
+    expect(regionSelect.find('option[value="eu-central-1"]').text()).toBe('eu-central-1')
+    await regionSelect.setValue('eu-central-1')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials).toMatchObject({
+      api_key: 'ksk-eu',
+      api_region: 'eu-central-1'
+    })
+  })
+
+  it('uses the Kiro region select for IDC authorization URLs', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Kiro')
+    await selectButtonByText(wrapper, 'admin.accounts.oauth.kiro.idcTitle')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('kiro idc account')
+
+    const regionSelect = wrapper.get<HTMLSelectElement>('[data-testid="kiro-idc-region-select"]')
+    expect(regionSelect.element.value).toBe('us-east-1')
+    expect(regionSelect.find('option[value="eu-central-1"]').exists()).toBe(true)
+    expect(regionSelect.find('option[value="eu-central-1"]').text()).toBe('eu-central-1')
+
+    await regionSelect.setValue('eu-central-1')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    await wrapper.get('[data-testid="generate-url"]').trigger('click')
+    await flushPromises()
+
+    expect(generateKiroIDCAuthUrlMock).toHaveBeenCalledWith({
+      proxy_id: undefined,
+      start_url: 'https://view.awsapps.com/start',
+      region: 'eu-central-1'
+    })
+  })
+
   it('antigravity upstream 创建默认携带上游倍率探测开关', async () => {
     // antigravity upstream 走独立创建 helper，
     // 也必须与其余 API-key 平台一样默认开启探测并传递开关。
@@ -392,5 +515,12 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await flushPromises()
 
     expect(createOpenAICodexPATMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(false)
+  })
+
+  it('allows enabling the Kiro direct API-key upstream billing probe', async () => {
+    await submitApiKeyAccount('kiro', false, true)
+
+    expect(createAccountMock.mock.calls[0]?.[0]?.upstream_billing_probe_enabled).toBe(true)
+    expect(probeUpstreamBillingMock).toHaveBeenCalledWith(42)
   })
 })

@@ -135,12 +135,12 @@ func TestCreateAccountDropsManagedUpstreamBillingProbeState(t *testing.T) {
 	require.NotContains(t, created.Extra, UpstreamBillingProbeExtraKey)
 }
 
-func TestCreateAccountAcceptsDedicatedUpstreamBillingProbeSetting(t *testing.T) {
+func TestCreateAccountAcceptsKiroAPIKeyUpstreamBillingProbeSetting(t *testing.T) {
 	enabled := true
 	repo := &upstreamBillingProbeAccountRepo{}
 	created, err := (&adminServiceImpl{accountRepo: repo}).CreateAccount(context.Background(), &CreateAccountInput{
-		Name:                 "upstream",
-		Platform:             PlatformOpenAI,
+		Name:                 "kiro api key",
+		Platform:             PlatformKiro,
 		Type:                 AccountTypeAPIKey,
 		Credentials:          map[string]any{"api_key": "sk-test"},
 		ProbeEnabled:         &enabled,
@@ -151,14 +151,40 @@ func TestCreateAccountAcceptsDedicatedUpstreamBillingProbeSetting(t *testing.T) 
 	require.Equal(t, true, created.Extra[UpstreamBillingProbeEnabledExtraKey])
 
 	_, err = (&adminServiceImpl{accountRepo: repo}).CreateAccount(context.Background(), &CreateAccountInput{
-		Name:                 "oauth",
-		Platform:             PlatformOpenAI,
+		Name:                 "kiro oauth",
+		Platform:             PlatformKiro,
 		Type:                 AccountTypeOAuth,
 		Credentials:          map[string]any{"access_token": "token"},
 		ProbeEnabled:         &enabled,
 		SkipDefaultGroupBind: true,
 	})
 	require.ErrorIs(t, err, ErrUpstreamBillingProbeAccountInvalid)
+}
+
+func TestUpdateAccountAcceptsKiroAPIKeyUpstreamBillingProbeSetting(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(map[bool]string{true: "enable", false: "disable"}[enabled], func(t *testing.T) {
+			accountID := int64(112)
+			repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
+				accountID: {
+					ID:       accountID,
+					Platform: PlatformKiro,
+					Type:     AccountTypeAPIKey,
+					Status:   StatusActive,
+					Extra:    map[string]any{},
+				},
+			}}
+
+			updated, err := (&adminServiceImpl{accountRepo: repo}).UpdateAccount(
+				context.Background(),
+				accountID,
+				&UpdateAccountInput{ProbeEnabled: &enabled},
+			)
+
+			require.NoError(t, err)
+			require.Equal(t, enabled, updated.Extra[UpstreamBillingProbeEnabledExtraKey])
+		})
+	}
 }
 
 func TestUpdateAccountPreservesManagedUpstreamBillingProbeStateForUnrelatedEdit(t *testing.T) {
@@ -643,12 +669,12 @@ func TestBulkUpdateAccountsDropsManagedUpstreamBillingProbeState(t *testing.T) {
 	require.NotContains(t, repo.bulkUpdates[0].Extra, UpstreamBillingProbeExtraKey)
 }
 
-func TestBulkUpdateAccountsAcceptsDedicatedUpstreamBillingProbeSetting(t *testing.T) {
+func TestBulkUpdateAccountsAcceptsKiroAPIKeyUpstreamBillingProbeSetting(t *testing.T) {
 	for _, enabled := range []bool{true, false} {
 		t.Run(map[bool]string{true: "enable", false: "disable"}[enabled], func(t *testing.T) {
 			repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{
-				1: {ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
-				2: {ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+				1: {ID: 1, Platform: PlatformKiro, Type: AccountTypeAPIKey},
+				2: {ID: 2, Platform: PlatformKiro, Type: AccountTypeAPIKey},
 			}}
 
 			result, err := (&adminServiceImpl{accountRepo: repo}).BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{

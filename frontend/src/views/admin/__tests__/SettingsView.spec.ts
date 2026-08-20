@@ -539,6 +539,7 @@ const baseSettingsResponse = {
     openai:      { daily: null, weekly: 12.5, monthly: null },
     gemini:      { daily: null, weekly: null, monthly: 200 },
     antigravity: { daily: null, weekly: null, monthly: null },
+    kiro:        { daily: null, weekly: null, monthly: null },
   },
 };
 
@@ -1531,6 +1532,37 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(Array.isArray(receivedProviders[0].supported_types)).toBe(true);
     expect(receivedProviders[0].supported_types).toEqual([]);
   });
+
+  it("renders all Grok default base URL mode options and saves the picked value", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    const select = wrapper.get('[data-testid="grok-default-base-url-mode"]');
+
+    // 五个上游选项必须齐全且顺序与取值稳定（保存的是 value，不是 label）
+    const optionValues = select
+      .findAll("option")
+      .map((node) => (node.element as HTMLOptionElement).value);
+    expect(optionValues).toEqual([
+      "cli",
+      "api",
+      "us-east-1",
+      "us-west-2",
+      "eu-west-1",
+    ]);
+
+    // 默认值来自 form 初始化
+    expect((select.element as HTMLSelectElement).value).toBe("cli");
+
+    await select.setValue("us-west-2");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ grok_default_base_url_mode: "us-west-2" }),
+    );
+  });
 });
 
 describe("admin SettingsView wechat connect controls", () => {
@@ -1836,6 +1868,7 @@ describe("admin SettingsView platform quota matrix", () => {
     expect(html).toContain("openai");
     expect(html).toContain("gemini");
     expect(html).toContain("antigravity");
+    expect(html).toContain("kiro");
   });
 
   it("保存时 updateSettings payload 应包含嵌套 default_platform_quotas 对象（含全 5 平台）", async () => {
@@ -1854,7 +1887,7 @@ describe("admin SettingsView platform quota matrix", () => {
     // 应携带嵌套对象，而非扁平字段
     expect(payload).toHaveProperty("default_platform_quotas");
     const quotas = payload["default_platform_quotas"] as Record<string, unknown>;
-    const platforms = ["anthropic", "openai", "gemini", "antigravity", "grok"];
+    const platforms = ["anthropic", "openai", "gemini", "antigravity", "kiro", "grok"];
     for (const p of platforms) {
       expect(quotas).toHaveProperty(p);
       const pq = quotas[p] as Record<string, unknown>;
@@ -1893,6 +1926,7 @@ describe("admin SettingsView platform quota matrix", () => {
     // 缺失平台应补全为 null
     expect(quotas["gemini"]).toEqual({ daily: null, weekly: null, monthly: null });
     expect(quotas["antigravity"]).toEqual({ daily: null, weekly: null, monthly: null });
+    expect(quotas["kiro"]).toEqual({ daily: null, weekly: null, monthly: null });
   });
 
   it("空输入（v-model.number 产出 \"\"）在提交时清洗为 null 而非空字符串", async () => {
@@ -1904,6 +1938,7 @@ describe("admin SettingsView platform quota matrix", () => {
         openai:    { daily: null, weekly: null, monthly: null },
         gemini:    { daily: null, weekly: null, monthly: null },
         antigravity: { daily: null, weekly: null, monthly: null },
+        kiro: { daily: null, weekly: null, monthly: null },
       },
     });
 

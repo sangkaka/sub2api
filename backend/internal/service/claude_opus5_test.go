@@ -39,7 +39,11 @@ func TestClaudeOpus5_FamilyFallbackDoesNotUseOpus4Rates(t *testing.T) {
 		},
 	})
 
-	for _, model := range []string{"claude-opus-5", "us.anthropic.claude-opus-5-v1"} {
+	for _, model := range []string{
+		"claude-opus-5",
+		"claude-opus-5-thinking", // Kiro 白名单别名
+		"us.anthropic.claude-opus-5-v1",
+	} {
 		t.Run(model, func(t *testing.T) {
 			pricing, err := svc.GetModelPricing(model)
 			require.NoError(t, err)
@@ -62,6 +66,7 @@ func TestClaudeOpus5_HardcodedFallbackPricing(t *testing.T) {
 		output float64
 	}{
 		{"claude-opus-5", opus5InputPricePerToken, opus5OutputPricePerToken},
+		{"claude-opus-5-thinking", opus5InputPricePerToken, opus5OutputPricePerToken},
 		{"us.anthropic.claude-opus-5-v1", opus5InputPricePerToken, opus5OutputPricePerToken},
 		// 4.8 与 5 同价；修复前兜底表缺失，会掉到 claude-3-opus 的 $15/$75
 		{"claude-opus-4-8", opus5InputPricePerToken, opus5OutputPricePerToken},
@@ -136,4 +141,12 @@ func TestClaudeOpus5_CatalogAndBedrockMapping(t *testing.T) {
 	mapped, ok := domain.DefaultBedrockModelMapping["claude-opus-5"]
 	require.True(t, ok, "claude-opus-5 missing from DefaultBedrockModelMapping")
 	assert.Equal(t, "us.anthropic.claude-opus-5-v1", mapped)
+
+	// Kiro 默认映射与上游 ID 均为恒等 claude-opus-5（thinking 折叠到同一上游）。
+	kiroMapped, ok := domain.DefaultKiroModelMapping["claude-opus-5"]
+	require.True(t, ok, "claude-opus-5 missing from DefaultKiroModelMapping")
+	assert.Equal(t, "claude-opus-5", kiroMapped)
+	kiroThinking, ok := domain.DefaultKiroModelMapping["claude-opus-5-thinking"]
+	require.True(t, ok, "claude-opus-5-thinking missing from DefaultKiroModelMapping")
+	assert.Equal(t, "claude-opus-5", kiroThinking)
 }

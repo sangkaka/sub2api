@@ -272,6 +272,27 @@ func TestBuildToolNameRewriteFromBody_ReverseOrderedByLengthDesc(t *testing.T) {
 	}
 }
 
+func TestResponsesCustomToolsWithRewriteAliases_AddsFakeNames(t *testing.T) {
+	customTools := map[string]bool{
+		"gamma_fetch": true,
+		"exec":        true,
+	}
+	rw := &ToolNameRewrite{
+		Forward: map[string]string{
+			"gamma_fetch": "lookup_gam02",
+			"plain_func":  "process_pla03",
+		},
+	}
+
+	got := responsesCustomToolsWithRewriteAliases(customTools, rw)
+
+	require.True(t, got["gamma_fetch"])
+	require.True(t, got["exec"])
+	require.True(t, got["lookup_gam02"])
+	require.False(t, got["process_pla03"])
+	require.False(t, customTools["lookup_gam02"], "input map must not be mutated")
+}
+
 func TestRestoreToolNamesInBytes_NoMapping_NoStaticMatch_IsNoop(t *testing.T) {
 	data := []byte("plain text without any tool names")
 	require.Equal(t, string(data), string(restoreToolNamesInBytes(data, nil)))

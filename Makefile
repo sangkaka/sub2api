@@ -1,4 +1,4 @@
-.PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical
+.PHONY: build build-backend build-frontend test test-unit test-backend test-frontend test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
 	src/api/__tests__/client.spec.ts \
@@ -28,6 +28,9 @@ build-frontend:
 
 # 运行测试（后端 + 前端）
 test: test-backend test-frontend
+
+test-unit:
+	@$(MAKE) -C backend test-unit
 
 test-backend:
 	@$(MAKE) -C backend test

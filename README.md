@@ -18,6 +18,24 @@ English | [中文](README_CN.md) | [日本語](README_JA.md)
 
 </div>
 
+## Kiro Channel Support (fork addition)
+
+This fork adds Kiro channel support on top of the official upstream (sourced from
+[nianzs/sub2api](https://github.com/nianzs/sub2api), matching the upstream-closed
+[PR #5058](https://github.com/Wei-Shaw/sub2api/pull/5058)):
+
+- Kiro accounts via OAuth / AWS Builder ID / token import, plus API-key-compatible upstreams.
+- Anthropic prompt-cache usage emulation for Kiro traffic, toggleable per group with a tunable ratio.
+- Kiro sticky sessions, credits usage accounting and a dedicated error classifier.
+
+<p align="center">
+  <img src="assets/screenshots/kiro-add-account.png" alt="Add a Kiro account" width="58%">
+  <img src="assets/screenshots/kiro-cache-emulation.png" alt="Kiro group cache emulation" width="35%">
+</p>
+
+> ⚠️ Upstream explicitly declined this code over DMCA takedown risk. Proxying Kiro may violate AWS's
+> terms of service; all risk from using the Kiro features in this fork is the operator's own.
+
 ## ⚠️ Important Notice
 
 Please read the following carefully before using this project:

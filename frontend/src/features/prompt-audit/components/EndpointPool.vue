@@ -135,13 +135,24 @@
         </div>
       </template>
     </BaseDialog>
+
+    <ConfirmDialog
+      :show="Boolean(pendingRemoval)"
+      :title="t('admin.promptAudit.pool.deleteConfirmTitle')"
+      :message="removeConfirmMessage"
+      :confirm-text="t('common.delete')"
+      danger
+      @confirm="confirmRemoval"
+      @cancel="cancelRemoval"
+    />
   </section>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import type { PromptAuditEndpointDraft, PromptProbeResult } from '../types'
 import { cloneData, createDefaultEndpoint } from '../viewModel'
 
@@ -157,6 +168,10 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const editing = ref<PromptAuditEndpointDraft | null>(null)
 const editingIndex = ref(-1)
+const pendingRemoval = ref<PromptAuditEndpointDraft | null>(null)
+const removeConfirmMessage = computed(() =>
+  pendingRemoval.value ? t('admin.promptAudit.pool.deleteConfirm', { name: pendingRemoval.value.name }) : '',
+)
 
 function openCreate() {
   editingIndex.value = -1
@@ -184,8 +199,16 @@ function toggleEndpoint(id: string) {
   emit('update:endpoints', props.endpoints.map((item) => item.id === id ? { ...item, enabled: !item.enabled } : cloneData(item)))
 }
 function removeEndpoint(endpoint: PromptAuditEndpointDraft) {
-  if (!window.confirm(t('admin.promptAudit.pool.deleteConfirm', { name: endpoint.name }))) return
-  emit('update:endpoints', props.endpoints.filter((item) => item.id !== endpoint.id).map((item) => cloneData(item)))
+  pendingRemoval.value = cloneData(endpoint)
+}
+function confirmRemoval() {
+  const target = pendingRemoval.value
+  if (!target) return
+  emit('update:endpoints', props.endpoints.filter((item) => item.id !== target.id).map((item) => cloneData(item)))
+  pendingRemoval.value = null
+}
+function cancelRemoval() {
+  pendingRemoval.value = null
 }
 function hasCredential(endpoint: PromptAuditEndpointDraft): boolean {
   return Boolean(endpoint.token.trim() || (endpoint.has_token && !endpoint.clear_token))

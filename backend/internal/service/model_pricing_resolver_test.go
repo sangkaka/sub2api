@@ -212,8 +212,8 @@ func TestGetRequestTierPrice_NilPerRequestPrice(t *testing.T) {
 // ===========================================================================
 
 // helper: creates a resolver wired to a ChannelService that returns the given
-// channel (active, groupID=100, platform=anthropic) with the specified pricing.
-func newResolverWithChannel(t *testing.T, pricing []ChannelModelPricing) *ModelPricingResolver {
+// channel (active, groupID=100) with the specified platform and pricing.
+func newResolverWithPlatformChannel(t *testing.T, platform string, pricing []ChannelModelPricing) *ModelPricingResolver {
 	t.Helper()
 	const groupID = 100
 	repo := &mockChannelRepository{
@@ -227,12 +227,18 @@ func newResolverWithChannel(t *testing.T, pricing []ChannelModelPricing) *ModelP
 			}}, nil
 		},
 		getGroupPlatformsFn: func(_ context.Context, _ []int64) (map[int64]string, error) {
-			return map[int64]string{groupID: "anthropic"}, nil
+			return map[int64]string{groupID: platform}, nil
 		},
 	}
 	cs := NewChannelService(repo, nil, nil, nil)
-	bs := newTestBillingServiceForResolver()
+	bs := NewBillingService(nil, nil)
 	return NewModelPricingResolver(cs, bs)
+}
+
+// helper: creates a resolver wired to a ChannelService that returns the given
+// channel (active, groupID=100, platform=anthropic) with the specified pricing.
+func newResolverWithChannel(t *testing.T, pricing []ChannelModelPricing) *ModelPricingResolver {
+	return newResolverWithPlatformChannel(t, "anthropic", pricing)
 }
 
 // groupIDPtr returns a pointer to groupID 100 (the test constant).
@@ -241,6 +247,50 @@ func groupIDPtr() *int64 { v := int64(100); return &v }
 // ---------------------------------------------------------------------------
 // 1. Token mode overrides
 // ---------------------------------------------------------------------------
+
+func TestResolve_KiroGPT56UsesChannelPricingBeforeDefaultOpenAIPricing(t *testing.T) {
+	r := newResolverWithPlatformChannel(t, PlatformKiro, []ChannelModelPricing{{
+		Platform:        PlatformKiro,
+		Models:          []string{"gpt-5.6-sol"},
+		BillingMode:     BillingModeToken,
+		InputPrice:      testPtrFloat64(0.11),
+		OutputPrice:     testPtrFloat64(0.22),
+		CacheWritePrice: testPtrFloat64(0.33),
+		CacheReadPrice:  testPtrFloat64(0.044),
+	}})
+
+	resolved := r.Resolve(context.Background(), PricingInput{
+		Model:   "gpt-5.6-sol",
+		GroupID: groupIDPtr(),
+	})
+
+	require.NotNil(t, resolved)
+	require.Equal(t, BillingModeToken, resolved.Mode)
+	require.Equal(t, PricingSourceChannel, resolved.Source)
+	require.NotNil(t, resolved.BasePricing)
+	require.InDelta(t, 0.11, resolved.BasePricing.InputPricePerToken, 1e-12)
+	require.InDelta(t, 0.22, resolved.BasePricing.OutputPricePerToken, 1e-12)
+	require.InDelta(t, 0.33, resolved.BasePricing.CacheCreationPricePerToken, 1e-12)
+	require.InDelta(t, 0.044, resolved.BasePricing.CacheReadPricePerToken, 1e-12)
+}
+
+func TestResolve_KiroGPT56FallsBackToDefaultOpenAIPricingWhenNoChannelPrice(t *testing.T) {
+	r := newResolverWithPlatformChannel(t, PlatformKiro, nil)
+
+	resolved := r.Resolve(context.Background(), PricingInput{
+		Model:   "gpt-5.6-luna",
+		GroupID: groupIDPtr(),
+	})
+
+	require.NotNil(t, resolved)
+	require.Equal(t, BillingModeToken, resolved.Mode)
+	require.Equal(t, PricingSourceLiteLLM, resolved.Source)
+	require.NotNil(t, resolved.BasePricing)
+	require.InDelta(t, 0.2e-6, resolved.BasePricing.InputPricePerToken, 1e-12)
+	require.InDelta(t, 1.2e-6, resolved.BasePricing.OutputPricePerToken, 1e-12)
+	require.InDelta(t, 0.25e-6, resolved.BasePricing.CacheCreationPricePerToken, 1e-12)
+	require.InDelta(t, 0.02e-6, resolved.BasePricing.CacheReadPricePerToken, 1e-12)
+}
 
 func TestResolve_WithChannelOverride_TokenFlat(t *testing.T) {
 	r := newResolverWithChannel(t, []ChannelModelPricing{{
