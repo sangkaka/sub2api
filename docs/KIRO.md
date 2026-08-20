@@ -1,0 +1,170 @@
+# Kiro 渠道（本 fork 附加）
+
+本仓库是 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) 的 fork，在上游之上合入了 Kiro 渠道接入。
+
+上游 PR [#5058「支持 Kiro GPT」](https://github.com/Wei-Shaw/sub2api/pull/5058) 于 2026-07-31 被关闭，
+理由是「之前有几个熟悉的项目引入 kiro 反代导致项目被 DMCA 下架，因此不会考虑 kiro 相关的」。
+PR 作者转为在 [`nianzs/sub2api`](https://github.com/nianzs/sub2api) 长期维护并持续与上游合并，
+本 fork 的 Kiro 代码即来自该仓库。
+
+> ⚠️ Kiro 是 AWS 的产品，反代其接口可能违反 AWS 服务条款，上游正是因下架风险拒绝这套代码。
+> 是否启用由使用者自行判断并承担风险。
+
+## 三个远端
+
+| remote | 指向 | 用途 |
+|---|---|---|
+| `origin` | `sangkaka/sub2api` | 本 fork，日常推送与开 PR |
+| `upstream` | `Wei-Shaw/sub2api` | 官方上游，只读同步 |
+| `kiro` | `nianzs/sub2api` | Kiro 上游，只读同步 |
+
+## 同步流程
+
+`nianzs/sub2api` 会持续跟上游合并（通常落后上游几十个提交），所以增量同步的冲突面能长期
+维持在几十个文件量级：
+
+```bash
+git fetch upstream kiro
+git checkout main && git merge upstream/main && git push origin main
+git checkout -b sync/kiro-$(date +%Y%m%d) main
+git merge kiro/main
+```
+
+### 冲突解决的既定规则
+
+这些规则是首次合并时定下的，重复同步时照做即可，不必每次重新判断：
+
+1. **生成物不手工合**：`backend/cmd/server/wire_gen.go` 与 `backend/ent/` 下的生成文件，
+   随便留一版让文件语法完整，然后 `cd backend && make generate` 重新生成，以生成结果为准。
+2. **平台枚举/白名单一律取并集**，新增 `kiro` 且保留上游后来加的平台。
+   漏掉任何一处都会静默不生效，合完必须逐个回看：
+   - `backend/internal/domain/constants.go`、`internal/service/domain_constants.go`
+   - `internal/model/error_passthrough_rule.go` 的 `AllPlatforms()`
+   - `internal/handler/admin/group_handler.go` 的 `binding:"...oneof=..."`
+   - `internal/service/scheduler_snapshot_service.go` 的 `schedulerSnapshotPlatforms()`
+   - `internal/repository/simple_mode_default_groups.go` 的 `requiredByPlatform`
+   - `internal/service/domain_constants.go` 的 `AllowedQuotaPlatforms`
+   - `backend/ent/schema/user_platform_quota.go` 的 `Validate`
+   - 前端只有 `frontend/src/constants/platforms.ts` 一处（`CONCRETE_PLATFORM_OPTIONS`），
+     其余选择器都从它派生，**不要**把 fork 侧那几份硬编码数组抄回来。
+3. **scheduler 快照测试取 fork 侧的参数化断言**。上游把平台数量硬编码进断言
+   （「8 平台 = 36 个 token」），fork 侧改成了 `expectedSchedulerAccountQueryCount()` /
+   `len(schedulerCanonicalBuckets(0))`。平台数一变上游那版必然失败，参数化版本才是对的。
+4. **网关/调度/计费共享文件以上游为骨架**，把 fork 的 `kiro` 分支逻辑并进去，
+   不要整文件 `--theirs` 覆盖掉上游的修复。
+5. **fork 的私有改动一律丢弃**：根目录 agent 工作笔记（`findings.md`/`progress.md`/`task_plan.md`）、
+   README 的 fork 品牌与赞助商、`Dockerfile` 的 npmmirror 默认源、`.gitignore` 里指向不存在
+   文件的 `scripts/` 规则、`release.yml` 被剥掉的 VERSION 同步任务。
+6. **绝不接受 fork 对已应用迁移的就地修改**。`migrations_runner` 按 `filename + SHA256`
+   校验不可变性，改动已应用的迁移文件会让已部署库直接启动失败。
+   fork 曾就地改过 `157_user_platform_quotas_add_grok.sql` 和
+   `224_user_platform_quotas_add_cn_providers.sql`——同一问题已由前向迁移
+   `227_user_platform_quotas_restore_kiro.sql` 修好，就地改是多余且有害的。
+
+## 代码位置
+
+**后端**
+
+| 路径 | 内容 |
+|---|---|
+| `backend/internal/pkg/kiro/` | 协议翻译（`translator.go`）、OAuth、指纹、签名、websearch、image tokens |
+| `backend/internal/pkg/kirocooldown/` | 账号冷却状态存储 |
+| `backend/internal/service/kiro_*.go` | runtime、模拟缓存、credits 用量、token provider/refresher、错误分类、profile resolver |
+| `backend/internal/handler/admin/kiro_oauth_handler.go` | 管理端 OAuth 接口 |
+
+**前端**：`frontend/src/api/admin/kiro.ts`、`composables/useKiroOAuth.ts`、
+`utils/kiroAccount.ts`、`constants/kiroRegions.ts`。
+
+**管理端路由**（`backend/internal/server/routes/admin.go`）：
+`/admin/kiro/oauth/{auth-url,idc-auth-url,exchange-code,refresh-token,import-token}`、
+`/admin/accounts/kiro/default-model-mapping`。
+
+## 请求怎么走到 Kiro
+
+**Kiro 没有独立的网关路径前缀**。不像 antigravity 有 `/antigravity/v1` + `middleware.ForcePlatform`，
+Kiro 走的是标准 Anthropic 入口（`/v1/messages`），由 **API Key 所属分组的 `platform` 字段**
+决定是否转发到 Kiro（`isKiroGroup`，`internal/service/gateway_service.go`）。
+
+也就是说：建一个 `platform=kiro` 的分组，把 Kiro 账号挂进去，用该分组下发的 Key 打
+`/v1/messages` 即可，客户端侧不需要改 base URL 后缀。
+
+## 账号类型
+
+`platform=kiro` 下 `type=apikey` 有两种语义，靠 `credentials.base_url` 是否为空区分
+（见 `frontend/src/utils/kiroAccount.ts`）：
+
+- **直连 AWS**（`base_url` 为空）：用 `ksk_` 直连 `q.{region}.amazonaws.com`，展示 Kiro credits。
+- **外部中转**（`base_url` 非空）：转发到外部 Anthropic 兼容上游 `{base_url}/v1/messages`，
+  不直连 AWS、无 Kiro credits，作为分组兜底/灾备。
+
+另有 `type=oauth`（AWS Builder ID / IDC）与 Token 导入。
+
+## 分组级配置
+
+`platform=kiro` 的分组独有以下字段（`backend/ent/schema/group.go`），对其他平台不生效：
+
+| 字段 | 说明 |
+|---|---|
+| `kiro_cache_emulation_enabled` | 是否为 Kiro 流量模拟 Anthropic Prompt Cache 用量 |
+| `kiro_cache_emulation_ratio` | 模拟比例，0–1 |
+| `kiro_cache_emulation_mode` | `uniform` / `independent` |
+| `kiro_cache_creation_emulation_ratio` | independent 模式下的 cache creation 比例 |
+| `kiro_cache_read_emulation_ratio` | independent 模式下的 cache read 比例 |
+| `kiro_auto_sticky_enabled` | 是否启用自动会话粘性路由 |
+| `kiro_sticky_session_ttl_seconds` | 粘性绑定 TTL |
+| `kiro_endpoint_mode` | `q` = AWS Q（`q.{region}.amazonaws.com`）/ `krs` = Kiro Runtime Service（`runtime.us-east-1.kiro.dev`） |
+
+## 已知约束与踩坑
+
+### govulncheck：webp 解码器的可达性
+
+`backend/internal/pkg/kiro/image_tokens.go` 在 `init` 里注册了 `golang.org/x/image/webp` 解码器。
+上游代码（`internal/service/user_service.go` 的头像压缩）虽然调用 `image.Decode`，但因为
+**没有任何包注册 webp**，govulncheck 的可达性分析判定 x/image 的 webp 漏洞不可达，
+上游 CI 因此是绿的。
+
+合入 Kiro 后 webp 被注册，同样的漏洞立刻变成可达路径，`backend-security` 直接报红
+（GO-2026-6222 / GO-2026-5061 / GO-2026-4961）。已通过把 `golang.org/x/image` 升到
+`v0.45.0` 解决。
+
+**结论**：本 fork 的 `x/image` 版本下限比上游高，同步时若上游 go.mod 把它降回去，
+需要重新升上来，否则 CI 必红。
+
+### 本地自验必须覆盖全部 build tag
+
+仓库里有 433 个 `//go:build unit`、78 个 `//go:build integration`、3 个 `//go:build e2e` 文件，
+不打 tag 的 `go test ./...` **一个都不会编译**。CI 的 `test` job 跑的是
+`make test-unit` + `make test-integration`，只跑裸 `go test ./...` 必然漏检：
+
+```bash
+cd backend
+go test ./...                      # 无 tag
+go test -tags=unit ./...           # CI: make test-unit
+go vet  -tags=integration ./...    # 至少保证编译；真跑起来要 PG
+go vet  -tags=e2e ./...
+```
+
+首次合并时就是漏了这一步，连吃两次 CI 红灯：先是 `unit` 下的
+`TestUpdateUserPlatformQuotas_Success` 断言数不对，再是 `integration` 下的孤儿测试编译失败。
+
+### fork 遗留的孤儿测试
+
+`nianzs/sub2api` 的 `integration` 套件在他们那边就是编译不过的。fork 提交
+`ddf063352「feat(ops): 错误日志 key 归因与早退字段补全」` 加了一整条「已删除 key 归因」
+链路（`opsRepository.LookupDeletedKeyAudit` + `service.OpsPort` + `OpsService` +
+`ops_error_logger.go` 调用方），后来在某次上游合并里实现被整条覆盖掉，
+只剩 `ops_repo_lookup_deleted_key_audit_integration_test.go` 成了孤儿。
+
+合并时已删除该测试文件，且**不恢复实现**——它在合并后的代码里零调用方，
+恢复等于把一个 fork 自己已经丢弃的私有功能重新引入，不属于 Kiro 接入范围。
+上游保留了 `deleted_api_key_audits` 表（迁移 145）与写入侧，缺的只是**反查**那一半；
+若将来需要「认证失败时用明文反查已删除 Key 的原所有者」，实现可从 `git show ddf063352` 取回。
+
+### 迁移文件同号不同名
+
+合入的 Kiro 迁移与上游存在同号不同名的情况（例如两个 `153_*.sql`）。
+`migrations_runner` 按**文件名字典序**执行、按 `filename + checksum` 去重，
+因此可以共存，不要为了「看着整齐」重编号——重编号等于换文件名，
+会让已部署库重复执行同一段 DDL。
+
+新增的 Kiro 迁移：`135` / `145` / `151` / `152` / `153`×2 / `192` / `227`。
