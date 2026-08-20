@@ -28,6 +28,8 @@ This fork adds Kiro channel support on top of the official upstream (sourced fro
 - Anthropic prompt-cache usage emulation for Kiro traffic, toggleable per group with a tunable ratio.
 - Kiro sticky sessions, credits usage accounting and a dedicated error classifier.
 
+See [docs/KIRO.md](docs/KIRO.md) for integration details, the upstream/fork sync workflow and known constraints.
+
 <p align="center">
   <img src="assets/screenshots/kiro-add-account.png" alt="Add a Kiro account" width="58%">
   <img src="assets/screenshots/kiro-cache-emulation.png" alt="Kiro group cache emulation" width="35%">

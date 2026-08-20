@@ -28,6 +28,8 @@
 - 面向 Kiro 流量的 Anthropic Prompt Cache 用量模拟，可按分组开关并调整模拟比例。
 - Kiro 粘性会话、credits 用量统计与专属错误分类。
 
+接入细节、与上游/Kiro fork 的同步流程、以及已知约束见 [docs/KIRO.md](docs/KIRO.md)。
+
 <p align="center">
   <img src="assets/screenshots/kiro-add-account.png" alt="添加 Kiro 账号" width="58%">
   <img src="assets/screenshots/kiro-cache-emulation.png" alt="Kiro 分组模拟缓存配置" width="35%">
