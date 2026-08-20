@@ -209,7 +209,11 @@ export default {
          syncingModels: 'Syncing...',
          syncModelsSuccess: 'Synced {count} new model(s)',
          syncModelsAlreadyUpToDate: 'Models already up to date',
-         syncModelsError: 'Failed to sync models'
+         syncModelsError: 'Failed to sync models',
+         fillDefaultModels: 'Fill Default Models',
+         fillDefaultModelsAlreadyConfigured: 'Default models already configured',
+         fillDefaultModelsSuccess: 'Filled {count} default model(s)',
+         fillingDefaultModels: 'Filling...'
        }
      },
 

@@ -57,6 +57,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 	if groupIn == nil {
 		return errors.New("group is nil")
 	}
+	service.NormalizeGroupRuntimeFields(groupIn)
 	modelPricing, err := json.Marshal(groupIn.ModelPricing)
 	if err != nil {
 		return fmt.Errorf("marshal group model pricing: %w", err)
@@ -111,6 +112,14 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetRpmLimit(groupIn.RPMLimit).
 		SetMaxReasoningEffort(groupIn.MaxReasoningEffort).
 		SetReasoningEffortMappings(groupIn.ReasoningEffortMappings).
+		SetKiroCacheEmulationEnabled(groupIn.KiroCacheEmulationEnabled).
+		SetKiroAutoStickyEnabled(groupIn.KiroAutoStickyEnabled).
+		SetKiroStickySessionTTLSeconds(groupIn.KiroStickySessionTTLSeconds).
+		SetKiroCacheEmulationRatio(groupIn.KiroCacheEmulationRatio).
+		SetKiroCacheEmulationMode(groupIn.KiroCacheEmulationMode).
+		SetKiroCacheCreationEmulationRatio(groupIn.KiroCacheCreationEmulationRatio).
+		SetKiroCacheReadEmulationRatio(groupIn.KiroCacheReadEmulationRatio).
+		SetKiroEndpointMode(groupIn.KiroEndpointMode).
 		SetPeakRateEnabled(groupIn.PeakRateEnabled).
 		SetPeakStart(groupIn.PeakStart).
 		SetPeakEnd(groupIn.PeakEnd).
@@ -241,6 +250,7 @@ func (r *groupRepository) GetByIDLite(ctx context.Context, id int64) (*service.G
 }
 
 func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) error {
+	service.NormalizeGroupRuntimeFields(groupIn)
 	modelPricing, err := json.Marshal(groupIn.ModelPricing)
 	if err != nil {
 		return fmt.Errorf("marshal group model pricing: %w", err)
@@ -287,6 +297,14 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetRpmLimit(groupIn.RPMLimit).
 		SetMaxReasoningEffort(groupIn.MaxReasoningEffort).
 		SetReasoningEffortMappings(groupIn.ReasoningEffortMappings).
+		SetKiroCacheEmulationEnabled(groupIn.KiroCacheEmulationEnabled).
+		SetKiroAutoStickyEnabled(groupIn.KiroAutoStickyEnabled).
+		SetKiroStickySessionTTLSeconds(groupIn.KiroStickySessionTTLSeconds).
+		SetKiroCacheEmulationRatio(groupIn.KiroCacheEmulationRatio).
+		SetKiroCacheEmulationMode(groupIn.KiroCacheEmulationMode).
+		SetKiroCacheCreationEmulationRatio(groupIn.KiroCacheCreationEmulationRatio).
+		SetKiroCacheReadEmulationRatio(groupIn.KiroCacheReadEmulationRatio).
+		SetKiroEndpointMode(groupIn.KiroEndpointMode).
 		SetPeakRateEnabled(groupIn.PeakRateEnabled).
 		SetPeakStart(groupIn.PeakStart).
 		SetPeakEnd(groupIn.PeakEnd).
@@ -510,7 +528,6 @@ func (r *groupRepository) listWithAccountCountSort(ctx context.Context, q *dbent
 			entries[i].accountCount = c.Total
 		}
 	}
-
 	// 第三步：Go 侧排序（数据量 = Group 总数，通常 < 200，安全）。
 	sortOrder := params.NormalizedSortOrder(pagination.SortOrderDesc)
 	tieCmp := func(a, b sortEntry) bool {

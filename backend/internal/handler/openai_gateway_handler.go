@@ -35,6 +35,7 @@ type OpenAIGatewayHandler struct {
 	apiKeyService              *service.APIKeyService
 	usageRecordWorkerPool      *service.UsageRecordWorkerPool
 	errorPassthroughService    *service.ErrorPassthroughService
+	promptRuleService          *service.PromptRuleService
 	contentModerationService   *service.ContentModerationService
 	securityAuditCoordinator   *securityaudit.Coordinator
 	grokMediaEligibilityProber grokMediaEligibilityProber
@@ -251,6 +252,7 @@ func NewOpenAIGatewayHandler(
 	apiKeyService *service.APIKeyService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
 	errorPassthroughService *service.ErrorPassthroughService,
+	promptRuleService *service.PromptRuleService,
 	contentModerationService *service.ContentModerationService,
 	opsService *service.OpsService,
 	cfg *config.Config,
@@ -269,6 +271,7 @@ func NewOpenAIGatewayHandler(
 		apiKeyService:            apiKeyService,
 		usageRecordWorkerPool:    usageRecordWorkerPool,
 		errorPassthroughService:  errorPassthroughService,
+		promptRuleService:        promptRuleService,
 		contentModerationService: contentModerationService,
 		opsService:               opsService,
 		concurrencyHelper:        NewConcurrencyHelper(concurrencyService, SSEPingFormatComment, pingInterval),
@@ -426,6 +429,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			defer imageReleaseFunc()
 		}
 	}
+
+	body = injectMatchingPromptRules(reqLog, h.promptRuleService, apiKey.GroupID, reqModel, service.PromptRuleProtocolOpenAIResponses, body)
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
@@ -1029,6 +1034,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicSecurityAuditError(c, decision)
 		return
 	}
+
+	body = injectMatchingPromptRules(reqLog, h.promptRuleService, apiKey.GroupID, reqModel, service.PromptRuleProtocolAnthropic, body)
 
 	// 解析渠道级模型映射
 	channelMappingMsg, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
@@ -1807,12 +1814,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision))
 		return
 	}
-
 	imageIntent := service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, firstMessage)
 	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, service.ImageGenerationPermissionMessage())
 		return
 	}
+	firstMessage = injectMatchingPromptRules(reqLog, h.promptRuleService, apiKey.GroupID, reqModel, service.PromptRuleProtocolOpenAIResponses, firstMessage)
 
 	// F5a: 握手层会话屏蔽检查。WS 握手无 body，显式标识仅来自握手 header
 	// （session_id / conversation_id）；无标识则放行，连接内仍有本地 flag 兜底。
@@ -2159,6 +2166,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				turnChannelMapping.Store(&openAIWSTurnChannelMappingSnapshot{turn: turn, mapping: mapping})
 				return mapping.MappedModel, nil
+			},
+			TransformRequest: func(_ int, payload []byte, originalModel string) ([]byte, error) {
+				model := strings.TrimSpace(originalModel)
+				if model == "" {
+					model = reqModel
+				}
+				return injectMatchingPromptRules(reqLog, h.promptRuleService, apiKey.GroupID, model, service.PromptRuleProtocolOpenAIResponses, payload), nil
 			},
 			BeforeTurn: func(turn int) error {
 				// turn==1 的会话屏蔽已由握手层检查覆盖；连接内 flag 只拦截后续 turn。

@@ -42,6 +42,17 @@ const mountModal = () => mount(BulkEditUserModal, {
         props: ['show', 'title'],
         emits: ['close'],
         template: '<div v-if="show"><slot /><slot name="footer" /></div>'
+      },
+      ConfirmDialog: {
+        props: ['show', 'title', 'message', 'confirmText', 'cancelText'],
+        emits: ['confirm', 'cancel'],
+        template: `
+          <div v-if="show" data-test="bulk-confirm">
+            <div data-test="bulk-confirm-message">{{ message }}</div>
+            <button data-test="bulk-confirm-ok" @click="$emit('confirm')">ok</button>
+            <button data-test="bulk-confirm-cancel" @click="$emit('cancel')">cancel</button>
+          </div>
+        `
       }
     }
   }
@@ -82,7 +93,6 @@ describe('BulkEditUserModal', () => {
   })
 
   it('submits only the enabled RPM field and preserves zero as unlimited', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = mountModal()
 
     await wrapper.get('[data-test="enable-rpm-limit"]').trigger('click')
@@ -91,24 +101,28 @@ describe('BulkEditUserModal', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
+    expect(wrapper.get('[data-test="bulk-confirm-message"]').text()).toContain(
+      'admin.users.bulkLimits.rpmUnlimitedValue'
+    )
+    await wrapper.get('[data-test="bulk-confirm-ok"]').trigger('click')
+    await flushPromises()
+
     expect(batchUpdateLimits).toHaveBeenCalledWith({
       user_ids: [4, 7],
       all: false,
       rpm_limit: 0
     })
-    expect(confirm).toHaveBeenCalledWith(
-      expect.stringContaining('admin.users.bulkLimits.rpmUnlimitedValue')
-    )
     expect(wrapper.emitted('success')).toEqual([[2]])
   })
 
   it('omits disabled fields from the request', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = mountModal()
 
     await wrapper.get('[data-test="enable-concurrency"]').trigger('click')
     await wrapper.get('[data-test="concurrency-input"]').setValue('9')
     await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await wrapper.get('[data-test="bulk-confirm-ok"]').trigger('click')
     await flushPromises()
 
     expect(batchUpdateLimits).toHaveBeenCalledWith({
@@ -119,12 +133,13 @@ describe('BulkEditUserModal', () => {
   })
 
   it('does not call the API when overwrite confirmation is cancelled', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
     const wrapper = mountModal()
 
     await wrapper.get('[data-test="enable-concurrency"]').trigger('click')
     await wrapper.get('[data-test="concurrency-input"]').setValue('9')
     await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await wrapper.get('[data-test="bulk-confirm-cancel"]').trigger('click')
     await flushPromises()
 
     expect(batchUpdateLimits).not.toHaveBeenCalled()

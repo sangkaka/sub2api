@@ -101,6 +101,7 @@ func TestUpdateUserPlatformQuotas_Success(t *testing.T) {
 		{"platform":"openai","daily_limit_usd":80.0,"weekly_limit_usd":300.0,"monthly_limit_usd":null},
 		{"platform":"gemini","daily_limit_usd":null,"weekly_limit_usd":null,"monthly_limit_usd":null},
 		{"platform":"antigravity","daily_limit_usd":null,"weekly_limit_usd":null,"monthly_limit_usd":null},
+		{"platform":"kiro","daily_limit_usd":null,"weekly_limit_usd":null,"monthly_limit_usd":null},
 		{"platform":"grok","daily_limit_usd":null,"weekly_limit_usd":null,"monthly_limit_usd":null}
 	]}`
 	c, w := putReq(t, body)
@@ -113,7 +114,7 @@ func TestUpdateUserPlatformQuotas_Success(t *testing.T) {
 		t.Fatalf("UpsertForUser should be called once, got %d", len(repo.upsertCalls))
 	}
 	// upsert 记录数 = 请求体中给出的平台数（未给出的平台不落库）。
-	if repo.upsertCalls[0].userID != 42 || len(repo.upsertCalls[0].records) != 5 {
+	if repo.upsertCalls[0].userID != 42 || len(repo.upsertCalls[0].records) != 6 {
 		t.Errorf("unexpected upsert call: %+v", repo.upsertCalls[0])
 	}
 	// 缓存失效：按全部允许平台统一失效（含 kimi/zhipu/deepseek）。
@@ -158,7 +159,7 @@ func TestUpdateUserPlatformQuotas_RejectsNegativeLimit(t *testing.T) {
 func TestUpdateUserPlatformQuotas_RejectsTooManyEntries(t *testing.T) {
 	h := buildTestHandler(&upsertCapturingQuotaRepo{}, &billingCacheStub{})
 	body := `{"quotas":[
-		{"platform":"anthropic"},{"platform":"openai"},{"platform":"gemini"},{"platform":"antigravity"},{"platform":"grok"},{"platform":"anthropic"}
+		{"platform":"anthropic"},{"platform":"openai"},{"platform":"gemini"},{"platform":"antigravity"},{"platform":"grok"},{"platform":"kiro"},{"platform":"anthropic"}
 	]}`
 	c, w := putReq(t, body)
 	h.UpdateUserPlatformQuotas(c)

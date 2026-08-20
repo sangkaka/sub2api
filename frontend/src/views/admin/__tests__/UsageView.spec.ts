@@ -4,7 +4,7 @@ import { defineComponent, ref } from 'vue'
 
 import UsageView from '../UsageView.vue'
 
-const { list, exportList, getStats, getSnapshotV2, getById, getModelStats, listErrorLogs, routeQuery, aoaToSheet, sheetAddAoa, saveAs, xlsxWrite } = vi.hoisted(() => {
+const { list, exportList, getStats, getSnapshotV2, getById, getModelStats, listErrorLogs, clearErrorLogs, routeQuery, aoaToSheet, sheetAddAoa, saveAs, xlsxWrite } = vi.hoisted(() => {
   vi.stubGlobal('localStorage', {
     getItem: vi.fn(() => null),
     setItem: vi.fn(),
@@ -19,6 +19,7 @@ const { list, exportList, getStats, getSnapshotV2, getById, getModelStats, listE
     getById: vi.fn(),
     getModelStats: vi.fn(),
     listErrorLogs: vi.fn(),
+    clearErrorLogs: vi.fn(),
     routeQuery: {} as Record<string, string>,
 		aoaToSheet: vi.fn(() => ({})),
 		sheetAddAoa: vi.fn(),
@@ -84,6 +85,7 @@ vi.mock('xlsx', () => ({
 
 vi.mock('@/api/admin/ops', () => ({
   listErrorLogs,
+  clearErrorLogs,
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -117,6 +119,7 @@ vi.mock('vue-router', () => ({
 
 const AppLayoutStub = { template: '<div><slot /></div>' }
 const UsageFiltersStub = defineComponent({
+  emits: ['cleanup'],
   setup(_, { expose }) {
     const userKeyword = ref('')
     let userSearchRevision = 0
@@ -131,7 +134,7 @@ const UsageFiltersStub = defineComponent({
     })
     return { userKeyword }
   },
-  template: '<div><span data-test="user-filter-label">{{ userKeyword }}</span><slot name="after-reset" /></div>',
+  template: '<div><span data-test="user-filter-label">{{ userKeyword }}</span><slot name="after-reset" /><button data-test="cleanup" @click="$emit(\'cleanup\')">cleanup</button></div>',
 })
 const UsageTableStub = {
   props: ['columns'],
@@ -524,6 +527,7 @@ describe('admin UsageView errors tab filter forwarding', () => {
     getSnapshotV2.mockReset()
     getModelStats.mockReset()
     listErrorLogs.mockReset()
+    clearErrorLogs.mockReset()
 
     list.mockResolvedValue({ items: [], total: 0, pages: 0 })
     getStats.mockResolvedValue({
@@ -533,9 +537,11 @@ describe('admin UsageView errors tab filter forwarding', () => {
     getSnapshotV2.mockResolvedValue({ trend: [], models: [], groups: [] })
     getModelStats.mockResolvedValue({ models: [] })
     listErrorLogs.mockResolvedValue({ items: [], total: 0, pages: 0 })
+    clearErrorLogs.mockResolvedValue({ deleted_rows: 0 })
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     vi.useRealTimers()
   })
 
@@ -571,6 +577,62 @@ describe('admin UsageView errors tab filter forwarding', () => {
       account_id: 7,
       group_id: 3,
     }))
+  })
+
+  it('clears error request logs from the errors tab using ops filters', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockImplementation(() => {
+      throw new Error('native confirm should not be used')
+    })
+    const ConfirmDialogStub = {
+      props: ['show', 'title', 'message'],
+      emits: ['confirm', 'cancel'],
+      template: `
+        <div v-if="show" data-test="error-cleanup-confirm">
+          <span class="title">{{ title }}</span>
+          <span class="message">{{ message }}</span>
+          <button data-test="confirm-error-cleanup" @click="$emit('confirm')">confirm</button>
+          <button data-test="cancel-error-cleanup" @click="$emit('cancel')">cancel</button>
+        </div>
+      `,
+    }
+    const wrapper = mount(UsageView, {
+      global: { stubs: {
+        AppLayout: AppLayoutStub, UsageStatsCards: true, UsageFilters: UsageFiltersStub,
+        UsageTable: true, UsageExportProgress: true, UsageCleanupDialog: true,
+        UserBalanceHistoryModal: true, AuditLogModal: true, Pagination: true, Select: true,
+        DateRangePicker: true, Icon: true, TokenUsageTrend: true,
+        ModelDistributionChart: true, GroupDistributionChart: true, EndpointDistributionChart: true,
+        OpsErrorLogTable: true, OpsErrorDetailModal: true, ConfirmDialog: ConfirmDialogStub,
+      } },
+    })
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    vm.filters.model = 'gpt-5.3-codex'
+    vm.filters.account_id = 7
+    vm.filters.group_id = 3
+
+    await wrapper.findAll('[data-testid="usage-detail-tab"]')[1].trigger('click')
+    await flushPromises()
+
+    await wrapper.find('[data-test="cleanup"]').trigger('click')
+    await flushPromises()
+
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(clearErrorLogs).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="error-cleanup-confirm"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="confirm-error-cleanup"]').trigger('click')
+    await flushPromises()
+
+    expect(clearErrorLogs).toHaveBeenCalledWith(expect.objectContaining({
+      view: 'all',
+      model: 'gpt-5.3-codex',
+      account_id: 7,
+      group_id: 3,
+    }))
+    expect(listErrorLogs).toHaveBeenCalledTimes(2)
   })
 })
 

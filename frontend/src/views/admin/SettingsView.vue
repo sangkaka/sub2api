@@ -461,22 +461,12 @@
                     >
                       {{ t("admin.settings.streamTimeout.action") }}
                     </label>
-                    <select
-                      v-model="streamTimeoutForm.action"
-                      class="input w-64"
-                    >
-                      <option value="temp_unsched">
-                        {{
-                          t("admin.settings.streamTimeout.actionTempUnsched")
-                        }}
-                      </option>
-                      <option value="error">
-                        {{ t("admin.settings.streamTimeout.actionError") }}
-                      </option>
-                      <option value="none">
-                        {{ t("admin.settings.streamTimeout.actionNone") }}
-                      </option>
-                    </select>
+                    <div class="w-64">
+                      <Select
+                        v-model="streamTimeoutForm.action"
+                        :options="streamTimeoutActionOptions"
+                      />
+                    </div>
                     <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                       {{ t("admin.settings.streamTimeout.actionHint") }}
                     </p>
@@ -3677,18 +3667,10 @@
                     >
                       {{ t("admin.settings.oidc.tokenAuthMethod") }}
                     </label>
-                    <select
+                    <Select
                       v-model="form.oidc_connect_token_auth_method"
-                      class="input font-mono text-sm"
-                    >
-                      <option value="client_secret_post">
-                        client_secret_post
-                      </option>
-                      <option value="client_secret_basic">
-                        client_secret_basic
-                      </option>
-                      <option value="none">none</option>
-                    </select>
+                      :options="oidcTokenAuthMethodOptions"
+                    />
                   </div>
 
                   <div>
@@ -4054,7 +4036,7 @@
                       </tr>
                     </thead>
                     <tbody class="space-y-2">
-                      <tr v-for="p in (['anthropic', 'openai', 'gemini', 'antigravity', 'grok'] as const)" :key="p" class="align-top">
+                      <tr v-for="p in (['anthropic', 'openai', 'gemini', 'antigravity', 'kiro', 'grok'] as const)" :key="p" class="align-top">
                         <td class="pr-4 py-1">
                           <span class="font-mono text-xs text-gray-700 dark:text-gray-300">{{ p }}</span>
                         </td>
@@ -4389,7 +4371,7 @@
                             </tr>
                           </thead>
                           <tbody>
-                            <tr v-for="p in (['anthropic', 'openai', 'gemini', 'antigravity', 'grok'] as const)" :key="`${authSource.source}-pq-${p}`" class="align-top">
+                            <tr v-for="p in (['anthropic', 'openai', 'gemini', 'antigravity', 'kiro', 'grok'] as const)" :key="`${authSource.source}-pq-${p}`" class="align-top">
                               <td class="pr-4 py-1">
                                 <span class="font-mono text-xs text-gray-700 dark:text-gray-300">{{ p }}</span>
                               </td>
@@ -4561,11 +4543,12 @@
                     :key="`codex-fp-${i}`"
                     class="mb-2 flex items-center gap-2"
                   >
-                    <select v-model="row.type" class="input w-32 text-sm">
-                      <option value="header_exact">{{ t("admin.settings.gatewayForwarding.codexFpTypeHeaderExact") }}</option>
-                      <option value="header_prefix">{{ t("admin.settings.gatewayForwarding.codexFpTypeHeaderPrefix") }}</option>
-                      <option value="body_path">{{ t("admin.settings.gatewayForwarding.codexFpTypeBodyPath") }}</option>
-                    </select>
+                    <Select
+                      v-model="row.type"
+                      :options="codexFingerprintTypeOptions"
+                      class="w-32"
+                      size="sm"
+                    />
                     <input
                       v-model="row.match"
                       type="text"
@@ -5251,18 +5234,15 @@
                   >
                     {{ t("admin.settings.gatewayForwarding.grokDefaultBaseURLMode") }}
                   </label>
-                  <select
-                    id="grok-default-base-url-mode"
-                    v-model="form.grok_default_base_url_mode"
-                    class="input mt-2 w-full"
-                    data-testid="grok-default-base-url-mode"
-                  >
-                    <option value="cli">{{ t("admin.settings.gatewayForwarding.grokBaseURLModeCLI") }}</option>
-                    <option value="api">{{ t("admin.settings.gatewayForwarding.grokBaseURLModeAPI") }}</option>
-                    <option value="us-east-1">{{ t("admin.settings.gatewayForwarding.grokBaseURLModeUSEast1") }}</option>
-                    <option value="us-west-2">{{ t("admin.settings.gatewayForwarding.grokBaseURLModeUSWest2") }}</option>
-                    <option value="eu-west-1">{{ t("admin.settings.gatewayForwarding.grokBaseURLModeEUWest1") }}</option>
-                  </select>
+                  <div class="mt-2">
+                    <Select
+                      id="grok-default-base-url-mode"
+                      v-model="form.grok_default_base_url_mode"
+                      :options="grokDefaultBaseURLModeOptions"
+                      :aria-label="t('admin.settings.gatewayForwarding.grokDefaultBaseURLMode')"
+                      data-testid="grok-default-base-url-mode"
+                    />
+                  </div>
                   <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                     {{ t("admin.settings.gatewayForwarding.grokDefaultBaseURLModeHint") }}
                   </p>
@@ -6710,14 +6690,10 @@
                     >
                       {{ t("admin.settings.customMenu.visibility") }}
                     </label>
-                    <select v-model="item.visibility" class="input text-sm">
-                      <option value="user">
-                        {{ t("admin.settings.customMenu.visibilityUser") }}
-                      </option>
-                      <option value="admin">
-                        {{ t("admin.settings.customMenu.visibilityAdmin") }}
-                      </option>
-                    </select>
+                    <Select
+                      v-model="item.visibility"
+                      :options="customMenuVisibilityOptions"
+                    />
                   </div>
 
                   <!-- URL (full width) -->
@@ -8706,6 +8682,32 @@
         @confirm="handleAffiliateConfirm"
         @cancel="cancelAffiliateConfirm"
       />
+      <ConfirmDialog
+        :show="showResetWebSearchUsageDialog"
+        :title="t('admin.settings.webSearchEmulation.resetUsageConfirm')"
+        :message="t('admin.settings.webSearchEmulation.resetUsageConfirm')"
+        :confirm-text="t('common.confirm')"
+        @confirm="confirmResetWebSearchUsage"
+        @cancel="showResetWebSearchUsageDialog = false"
+      />
+      <ConfirmDialog
+        :show="showRegenerateApiKeyDialog"
+        :title="t('admin.settings.adminApiKey.regenerateConfirm')"
+        :message="t('admin.settings.adminApiKey.regenerateConfirm')"
+        :confirm-text="t('common.confirm')"
+        danger
+        @confirm="confirmRegenerateAdminApiKey"
+        @cancel="showRegenerateApiKeyDialog = false"
+      />
+      <ConfirmDialog
+        :show="showDeleteApiKeyDialog"
+        :title="t('admin.settings.adminApiKey.deleteConfirm')"
+        :message="t('admin.settings.adminApiKey.deleteConfirm')"
+        :confirm-text="t('common.delete')"
+        danger
+        @confirm="confirmDeleteAdminApiKey"
+        @cancel="showDeleteApiKeyDialog = false"
+      />
       <!-- 关闭 step-up 开关等敏感保存操作触发的 TOTP 二次验证 -->
       <TotpStepUpDialog :controller="settingsStepUp" />
     </div>
@@ -8786,10 +8788,41 @@ import {
   parseFingerprintSignalsToRows,
   serializeFingerprintRowsToJSON,
   defaultFingerprintSignalRows,
+  type FingerprintSignalType,
   type FingerprintSignalRow,
 } from "./codexFingerprintSignals";
 
 const { t, locale } = useI18n();
+
+// Select 选项（i18n label 用 computed 保证切换语言响应式）
+const grokDefaultBaseURLModeOptions = computed(() => [
+  { value: "cli", label: t("admin.settings.gatewayForwarding.grokBaseURLModeCLI") },
+  { value: "api", label: t("admin.settings.gatewayForwarding.grokBaseURLModeAPI") },
+  { value: "us-east-1", label: t("admin.settings.gatewayForwarding.grokBaseURLModeUSEast1") },
+  { value: "us-west-2", label: t("admin.settings.gatewayForwarding.grokBaseURLModeUSWest2") },
+  { value: "eu-west-1", label: t("admin.settings.gatewayForwarding.grokBaseURLModeEUWest1") },
+]);
+const streamTimeoutActionOptions = computed(() => [
+  { value: "temp_unsched", label: t("admin.settings.streamTimeout.actionTempUnsched") },
+  { value: "error", label: t("admin.settings.streamTimeout.actionError") },
+  { value: "none", label: t("admin.settings.streamTimeout.actionNone") },
+]);
+const oidcTokenAuthMethodOptions = [
+  { value: "client_secret_post", label: "client_secret_post" },
+  { value: "client_secret_basic", label: "client_secret_basic" },
+  { value: "none", label: "none" },
+];
+const customMenuVisibilityOptions = computed(() => [
+  { value: "user", label: t("admin.settings.customMenu.visibilityUser") },
+  { value: "admin", label: t("admin.settings.customMenu.visibilityAdmin") },
+]);
+const codexFingerprintTypeOptions = computed<
+  { value: FingerprintSignalType; label: string }[]
+>(() => [
+  { value: "header_exact", label: t("admin.settings.gatewayForwarding.codexFpTypeHeaderExact") },
+  { value: "header_prefix", label: t("admin.settings.gatewayForwarding.codexFpTypeHeaderPrefix") },
+  { value: "body_path", label: t("admin.settings.gatewayForwarding.codexFpTypeBodyPath") },
+]);
 const appStore = useAppStore();
 // 关闭 step-up 开关是敏感操作：后端返回 STEP_UP_REQUIRED 时弹 TOTP 码重试
 const settingsStepUp = useStepUp();
@@ -10045,11 +10078,18 @@ function quotaPercentage(provider: WebSearchProviderConfig): number {
   return ((provider.quota_used ?? 0) / provider.quota_limit) * 100;
 }
 
-async function resetWebSearchUsage(idx: number) {
+const showResetWebSearchUsageDialog = ref(false);
+let pendingResetWebSearchIdx = -1;
+function resetWebSearchUsage(idx: number) {
   const provider = webSearchConfig.providers[idx];
   if (!provider) return;
-  if (!confirm(t("admin.settings.webSearchEmulation.resetUsageConfirm")))
-    return;
+  pendingResetWebSearchIdx = idx;
+  showResetWebSearchUsageDialog.value = true;
+}
+async function confirmResetWebSearchUsage() {
+  showResetWebSearchUsageDialog.value = false;
+  const provider = webSearchConfig.providers[pendingResetWebSearchIdx];
+  if (!provider) return;
   try {
     await adminAPI.settings.resetWebSearchUsage({
       provider_type: provider.type,
@@ -11650,13 +11690,20 @@ async function createAdminApiKey() {
   }
 }
 
-async function regenerateAdminApiKey() {
-  if (!confirm(t("admin.settings.adminApiKey.regenerateConfirm"))) return;
+const showRegenerateApiKeyDialog = ref(false);
+const showDeleteApiKeyDialog = ref(false);
+function regenerateAdminApiKey() {
+  showRegenerateApiKeyDialog.value = true;
+}
+async function confirmRegenerateAdminApiKey() {
+  showRegenerateApiKeyDialog.value = false;
   await createAdminApiKey();
 }
-
-async function deleteAdminApiKey() {
-  if (!confirm(t("admin.settings.adminApiKey.deleteConfirm"))) return;
+function deleteAdminApiKey() {
+  showDeleteApiKeyDialog.value = true;
+}
+async function confirmDeleteAdminApiKey() {
+  showDeleteApiKeyDialog.value = false;
   adminApiKeyOperating.value = true;
   try {
     await adminAPI.settings.deleteAdminApiKey();

@@ -241,6 +241,19 @@ func TestEstimateOpenAIInputTokens_RequestSamples(t *testing.T) {
 	}
 }
 
+func TestEstimateOpenAIInputTokens_AllowsArrayToolOutput(t *testing.T) {
+	got, err := estimateOpenAIInputTokens(openAIInputTokensCountRequest{
+		Model: "gpt-5",
+		Input: json.RawMessage(`[
+			{"type":"custom_tool_call","call_id":"call_exec","name":"exec","input":"pwd"},
+			{"type":"custom_tool_call_output","call_id":"call_exec","output":[{"type":"text","text":"/tmp"}]}
+		]`),
+	})
+
+	require.NoError(t, err)
+	require.Greater(t, got, 0)
+}
+
 func TestEstimateGrokCountTokens_AnthropicRequests(t *testing.T) {
 	cases := []struct {
 		name string

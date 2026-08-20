@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/kiro"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -228,6 +231,106 @@ func compositeRouteFromInput(groupID int64, input CompositeRouteInput) (*Composi
 	}, nil
 }
 
+func (s *adminServiceImpl) GetGroupEffectiveModels(ctx context.Context, id int64) ([]string, error) {
+	group, err := s.groupRepo.GetByIDLite(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if s.accountRepo == nil {
+		return resolveGroupEffectiveModels(group, nil), nil
+	}
+	accounts, err := s.accountRepo.ListSchedulableByGroupID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return resolveGroupEffectiveModels(group, accounts), nil
+}
+
+func resolveGroupEffectiveModels(group *Group, accounts []Account) []string {
+	if group == nil {
+		return nil
+	}
+	modelSet := make(map[string]struct{})
+	matchingAccounts := 0
+	for i := range accounts {
+		if accounts[i].Platform != group.Platform {
+			continue
+		}
+		matchingAccounts++
+		for modelID := range accounts[i].GetModelMapping() {
+			modelID = strings.TrimSpace(modelID)
+			if modelID != "" {
+				modelSet[modelID] = struct{}{}
+			}
+		}
+	}
+	if matchingAccounts == 0 {
+		return nil
+	}
+	models := make([]string, 0, len(modelSet))
+	for modelID := range modelSet {
+		models = append(models, modelID)
+	}
+	sort.Strings(models)
+	defaults := defaultModelsListCandidateIDs(group.Platform)
+	if len(models) == 0 {
+		models = append([]string(nil), defaults...)
+	}
+	if !group.CustomModelsListEnabled() {
+		return models
+	}
+	allowedSource := models
+	if group.Platform == PlatformAnthropic && len(modelSet) > 0 {
+		allowedSource = mergeUniqueModelIDs(models, defaults)
+	}
+	return filterEffectiveModels(allowedSource, group.ModelsListConfig.Models)
+}
+
+func mergeUniqueModelIDs(modelLists ...[]string) []string {
+	seen := make(map[string]struct{})
+	merged := make([]string, 0)
+	for _, models := range modelLists {
+		for _, modelID := range models {
+			modelID = strings.TrimSpace(modelID)
+			if modelID == "" {
+				continue
+			}
+			if _, exists := seen[modelID]; exists {
+				continue
+			}
+			seen[modelID] = struct{}{}
+			merged = append(merged, modelID)
+		}
+	}
+	return merged
+}
+
+func filterEffectiveModels(available, selected []string) []string {
+	filtered := make([]string, 0, len(selected))
+	seen := make(map[string]struct{}, len(selected))
+	for _, modelID := range selected {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" || !effectiveModelsAllow(available, modelID) {
+			continue
+		}
+		if _, exists := seen[modelID]; exists {
+			continue
+		}
+		seen[modelID] = struct{}{}
+		filtered = append(filtered, modelID)
+	}
+	return filtered
+}
+
+func effectiveModelsAllow(available []string, modelID string) bool {
+	for _, pattern := range available {
+		if pattern == modelID || strings.HasSuffix(pattern, "*") && strings.HasPrefix(modelID, strings.TrimSuffix(pattern, "*")) {
+			return true
+		}
+	}
+	return false
+}
+
 func defaultModelsListCandidateIDs(platform string) []string {
 	switch platform {
 	case PlatformOpenAI:
@@ -242,6 +345,12 @@ func defaultModelsListCandidateIDs(platform string) []string {
 		models := antigravity.DefaultModels()
 		ids := make([]string, 0, len(models))
 		for _, model := range models {
+			ids = append(ids, model.ID)
+		}
+		return ids
+	case PlatformKiro:
+		ids := make([]string, 0, len(kiro.DefaultModels))
+		for _, model := range kiro.DefaultModels {
 			ids = append(ids, model.ID)
 		}
 		return ids
@@ -291,8 +400,38 @@ func groupSupportsOAuthOnlyFilter(platform string) bool {
 		platform == PlatformAntigravity ||
 		platform == PlatformAnthropic ||
 		platform == PlatformGemini ||
+		platform == PlatformKiro ||
 		platform == PlatformGrok ||
 		platform == PlatformComposite
+}
+
+func validateKiroCacheEmulationRatio(name string, value *float64) error {
+	if value == nil {
+		return nil
+	}
+	if math.IsNaN(*value) || math.IsInf(*value, 0) || *value < 0 || *value > 1 {
+		return infraerrors.BadRequest(
+			"INVALID_KIRO_CACHE_EMULATION_RATIO",
+			fmt.Sprintf("%s must be a finite number between 0 and 1", name),
+		)
+	}
+	return nil
+}
+
+func validateKiroCacheEmulationRatioInputs(ratio, creationRatio, readRatio *float64) error {
+	for _, field := range []struct {
+		name  string
+		value *float64
+	}{
+		{"kiro_cache_emulation_ratio", ratio},
+		{"kiro_cache_creation_emulation_ratio", creationRatio},
+		{"kiro_cache_read_emulation_ratio", readRatio},
+	} {
+		if err := validateKiroCacheEmulationRatio(field.name, field.value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupInput) (*Group, error) {
@@ -301,6 +440,13 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	}
 
 	platform := NormalizeGroupPlatform(input.Platform)
+	if err := validateKiroCacheEmulationRatioInputs(
+		input.KiroCacheEmulationRatio,
+		input.KiroCacheCreationEmulationRatio,
+		input.KiroCacheReadEmulationRatio,
+	); err != nil {
+		return nil, err
+	}
 	modelPricing, err := normalizeGroupModelPricing(platform, input.ModelPricing)
 	if err != nil {
 		return nil, err
@@ -417,8 +563,30 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		mcpXMLInject = *input.MCPXMLInject
 	}
 
+	kiroAutoStickyEnabled := platform == PlatformKiro
+	if input.KiroAutoStickyEnabled != nil {
+		kiroAutoStickyEnabled = *input.KiroAutoStickyEnabled
+	}
 	allowImageGeneration := input.AllowImageGeneration || defaultAllowImageGenerationForPlatform(platform)
 	allowBatchImageGeneration := input.AllowBatchImageGeneration && allowImageGeneration && platform == PlatformGemini
+	kiroCacheEmulationRatio := 1.0
+	if input.KiroCacheEmulationRatio != nil {
+		kiroCacheEmulationRatio = *input.KiroCacheEmulationRatio
+	}
+	kiroCacheEmulationMode := KiroCacheEmulationModeUniform
+	if input.KiroCacheEmulationMode != nil {
+		kiroCacheEmulationMode = normalizeKiroCacheEmulationMode(*input.KiroCacheEmulationMode)
+	}
+	kiroCacheCreationEmulationRatio := kiroCacheEmulationRatio
+	kiroCacheReadEmulationRatio := kiroCacheEmulationRatio
+	if kiroCacheEmulationMode == KiroCacheEmulationModeIndependent {
+		if input.KiroCacheCreationEmulationRatio != nil {
+			kiroCacheCreationEmulationRatio = *input.KiroCacheCreationEmulationRatio
+		}
+		if input.KiroCacheReadEmulationRatio != nil {
+			kiroCacheReadEmulationRatio = *input.KiroCacheReadEmulationRatio
+		}
+	}
 
 	// 如果指定了复制账号的源分组，先获取账号 ID 列表
 	var accountIDsToCopy []int64
@@ -508,12 +676,25 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		RPMLimit:                        input.RPMLimit,
 		MaxReasoningEffort:              maxReasoningEffort,
 		ReasoningEffortMappings:         reasoningEffortMappings,
+		KiroCacheEmulationEnabled:       input.KiroCacheEmulationEnabled,
+		KiroAutoStickyEnabled:           kiroAutoStickyEnabled,
+		KiroCacheEmulationRatio:         kiroCacheEmulationRatio,
+		KiroCacheEmulationMode:          kiroCacheEmulationMode,
+		KiroCacheCreationEmulationRatio: kiroCacheCreationEmulationRatio,
+		KiroCacheReadEmulationRatio:     kiroCacheReadEmulationRatio,
+	}
+	if input.KiroStickySessionTTLSeconds != nil {
+		group.KiroStickySessionTTLSeconds = *input.KiroStickySessionTTLSeconds
+	}
+	if input.KiroEndpointMode != nil {
+		group.KiroEndpointMode = *input.KiroEndpointMode
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}
 	sanitizeGroupReasoningEffortPolicy(group)
+	NormalizeGroupRuntimeFields(group)
 	if err := s.groupRepo.Create(ctx, group); err != nil {
 		return nil, err
 	}
@@ -636,6 +817,13 @@ func (s *adminServiceImpl) validateFallbackGroupOnInvalidRequest(ctx context.Con
 }
 
 func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *UpdateGroupInput) (*Group, error) {
+	if err := validateKiroCacheEmulationRatioInputs(
+		input.KiroCacheEmulationRatio,
+		input.KiroCacheCreationEmulationRatio,
+		input.KiroCacheReadEmulationRatio,
+	); err != nil {
+		return nil, err
+	}
 	group, err := s.groupRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -889,11 +1077,45 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		}
 		group.ReasoningEffortMappings = reasoningEffortMappings
 	}
+	if input.KiroCacheEmulationEnabled != nil {
+		group.KiroCacheEmulationEnabled = *input.KiroCacheEmulationEnabled
+	}
+	if input.KiroAutoStickyEnabled != nil {
+		group.KiroAutoStickyEnabled = *input.KiroAutoStickyEnabled
+	}
+	if input.KiroStickySessionTTLSeconds != nil {
+		group.KiroStickySessionTTLSeconds = *input.KiroStickySessionTTLSeconds
+	}
+	if input.KiroCacheEmulationRatio != nil {
+		group.KiroCacheEmulationRatio = *input.KiroCacheEmulationRatio
+	}
+	previousCacheMode := group.EffectiveKiroCacheEmulationMode()
+	if input.KiroCacheEmulationMode != nil {
+		group.KiroCacheEmulationMode = *input.KiroCacheEmulationMode
+	}
+	if input.KiroCacheCreationEmulationRatio != nil {
+		group.KiroCacheCreationEmulationRatio = *input.KiroCacheCreationEmulationRatio
+	}
+	if input.KiroCacheReadEmulationRatio != nil {
+		group.KiroCacheReadEmulationRatio = *input.KiroCacheReadEmulationRatio
+	}
+	if previousCacheMode == KiroCacheEmulationModeUniform && normalizeKiroCacheEmulationMode(group.KiroCacheEmulationMode) == KiroCacheEmulationModeIndependent {
+		if input.KiroCacheCreationEmulationRatio == nil {
+			group.KiroCacheCreationEmulationRatio = group.KiroCacheEmulationRatio
+		}
+		if input.KiroCacheReadEmulationRatio == nil {
+			group.KiroCacheReadEmulationRatio = group.KiroCacheEmulationRatio
+		}
+	}
+	if input.KiroEndpointMode != nil {
+		group.KiroEndpointMode = *input.KiroEndpointMode
+	}
 	sanitizeGroupMessagesDispatchFields(group)
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}
 	sanitizeGroupReasoningEffortPolicy(group)
+	NormalizeGroupRuntimeFields(group)
 
 	if err := s.groupRepo.Update(ctx, group); err != nil {
 		return nil, err

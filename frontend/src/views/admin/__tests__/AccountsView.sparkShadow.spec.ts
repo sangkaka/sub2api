@@ -307,6 +307,33 @@ describe('admin AccountsView — 账号行展示', () => {
     wrapper.unmount()
   })
 
+  it('passes OpenAI auth mode to platform badges', async () => {
+    listAccounts.mockResolvedValue({
+      items: [
+        {
+          id: 301,
+          name: 'agent-identity',
+          platform: 'openai',
+          type: 'oauth',
+          credentials: { auth_mode: 'agent_identity' }
+        }
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mountViewWithRow()
+    await flushPromises()
+
+    const badges = wrapper.findAllComponents(PlatformTypeBadge)
+    const openAIBadge = badges.find((badge) => badge.props('platform') === 'openai')
+    expect(openAIBadge?.props('authMode')).toBe('agent_identity')
+
+    wrapper.unmount()
+  })
+
   it('仅将具有安全 base_url 的 API Key 账号名称链接到站点主页', async () => {
     listAccounts.mockResolvedValue({
       items: [

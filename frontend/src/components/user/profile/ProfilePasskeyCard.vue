@@ -111,7 +111,7 @@
                 type="button"
                 class="btn btn-secondary btn-sm"
                 :disabled="busy"
-                @click="renamePasskey(credential)"
+                @click="openRenameDialog(credential)"
               >
                 {{ t('common.edit') }}
               </button>
@@ -128,6 +128,42 @@
         </div>
       </div>
     </div>
+
+    <BaseDialog
+      :show="renameTarget !== null"
+      :title="t('profile.passkey.renameTitle')"
+      width="narrow"
+      @close="closeRenameDialog"
+    >
+      <form id="passkey-rename-form" @submit.prevent="confirmRename">
+        <label for="passkey-rename-name" class="input-label">
+          {{ t('profile.passkey.renamePrompt') }}
+        </label>
+        <input
+          id="passkey-rename-name"
+          v-model="renameName"
+          class="input"
+          maxlength="100"
+          autofocus
+        />
+      </form>
+
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <button type="button" class="btn btn-secondary" :disabled="busy" @click="closeRenameDialog">
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            type="submit"
+            form="passkey-rename-form"
+            class="btn btn-primary"
+            :disabled="busy || renameName.trim().length === 0 || renameName.trim() === renameTarget?.name"
+          >
+            {{ busy ? t('common.processing') : t('common.save') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
 
     <!-- 删除确认：吊销凭据需验证当前密码，防止被窃会话静默移除 Passkey -->
     <div v-if="deleteTarget" class="fixed inset-0 z-50 overflow-y-auto">
@@ -180,6 +216,7 @@
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { passkeyAPI, type PasskeyCredentialSummary } from '@/api'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import { Icon } from '@/components/icons'
 import { useAppStore } from '@/stores/app'
 
@@ -193,6 +230,8 @@ const busy = ref(false)
 const showAddForm = ref(false)
 const newName = ref('')
 const newPassword = ref('')
+const renameTarget = ref<PasskeyCredentialSummary | null>(null)
+const renameName = ref('')
 const deleteTarget = ref<PasskeyCredentialSummary | null>(null)
 const deletePassword = ref('')
 const credentials = ref<PasskeyCredentialSummary[]>([])
@@ -247,13 +286,27 @@ function cancelAdd(): void {
   newPassword.value = ''
 }
 
-async function renamePasskey(credential: PasskeyCredentialSummary): Promise<void> {
-  const name = window.prompt(t('profile.passkey.renamePrompt'), credential.name)?.trim()
-  if (!name || name === credential.name) return
+function openRenameDialog(credential: PasskeyCredentialSummary): void {
+  renameTarget.value = credential
+  renameName.value = credential.name
+}
+
+function closeRenameDialog(): void {
+  if (busy.value) return
+  renameTarget.value = null
+  renameName.value = ''
+}
+
+async function confirmRename(): Promise<void> {
+  const credential = renameTarget.value
+  const name = renameName.value.trim()
+  if (!credential || !name || name === credential.name) return
   busy.value = true
   try {
     await passkeyAPI.rename(credential.id, name)
     credential.name = name
+    renameTarget.value = null
+    renameName.value = ''
     appStore.showSuccess(t('profile.passkey.renamed'))
   } catch {
     appStore.showError(t('profile.passkey.renameFailed'))

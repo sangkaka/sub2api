@@ -209,7 +209,11 @@ export default {
         syncingModels: '同步中...',
         syncModelsSuccess: '已同步 {count} 个新模型',
         syncModelsAlreadyUpToDate: '模型列表已是最新',
-        syncModelsError: '同步模型失败'
+        syncModelsError: '同步模型失败',
+        fillDefaultModels: '填充默认模型',
+        fillDefaultModelsAlreadyConfigured: '默认模型已全部配置',
+        fillDefaultModelsSuccess: '已填充 {count} 个默认模型',
+        fillingDefaultModels: '填充中...'
       }
     },
 

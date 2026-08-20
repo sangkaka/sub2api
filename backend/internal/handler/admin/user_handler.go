@@ -742,8 +742,9 @@ func (h *UserHandler) UpdateUserPlatformQuotas(c *gin.Context) {
 		return
 	}
 
-	if len(req.Quotas) > len(service.AllowedQuotaPlatforms) {
-		response.BadRequest(c, fmt.Sprintf("quotas length must be <= %d", len(service.AllowedQuotaPlatforms)))
+	maxQuotaPlatforms := len(service.AllowedQuotaPlatforms)
+	if len(req.Quotas) > maxQuotaPlatforms {
+		response.BadRequest(c, fmt.Sprintf("quotas length must be <= %d", maxQuotaPlatforms))
 		return
 	}
 	seen := make(map[string]struct{}, len(req.Quotas))

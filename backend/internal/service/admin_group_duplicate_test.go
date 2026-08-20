@@ -241,6 +241,30 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 	require.Equal(t, 11.0, *source.DailyLimitUSD)
 }
 
+func TestCloneGroupForDuplicateCopiesKiroCacheConfiguration(t *testing.T) {
+	source := &Group{
+		Platform:                        PlatformKiro,
+		KiroCacheEmulationEnabled:       true,
+		KiroAutoStickyEnabled:           true,
+		KiroStickySessionTTLSeconds:     7200,
+		KiroCacheEmulationRatio:         0.6,
+		KiroCacheEmulationMode:          KiroCacheEmulationModeIndependent,
+		KiroCacheCreationEmulationRatio: 0.9,
+		KiroCacheReadEmulationRatio:     0.25,
+		KiroEndpointMode:                KiroEndpointModeAuto,
+	}
+
+	duplicate := cloneGroupForDuplicate(source, "operation")
+	require.True(t, duplicate.KiroCacheEmulationEnabled)
+	require.True(t, duplicate.KiroAutoStickyEnabled)
+	require.Equal(t, 7200, duplicate.KiroStickySessionTTLSeconds)
+	require.InDelta(t, 0.6, duplicate.KiroCacheEmulationRatio, 1e-12)
+	require.Equal(t, KiroCacheEmulationModeIndependent, duplicate.KiroCacheEmulationMode)
+	require.InDelta(t, 0.9, duplicate.KiroCacheCreationEmulationRatio, 1e-12)
+	require.InDelta(t, 0.25, duplicate.KiroCacheReadEmulationRatio, 1e-12)
+	require.Equal(t, KiroEndpointModeAuto, duplicate.KiroEndpointMode)
+}
+
 func TestDuplicateGroupRecoversSameOperationAndScopesByAdmin(t *testing.T) {
 	source := &Group{ID: 9, Name: "team", Platform: PlatformAnthropic, Status: StatusActive}
 	repo := newDuplicateGroupRepoStub(source)

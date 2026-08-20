@@ -48,7 +48,7 @@ export default {
       probeProgress: 'Config validated ✓ · request sent · awaiting service response…', probeResult: 'Config ✓ · request ✓ · HTTP {http} · {status} · {latency} ms',
       name: 'Node name', id: 'Stable node ID', baseUrl: 'Base URL', apiKey: 'API Key', keepSecret: 'Leave blank to keep the saved API Key', reenterSecret: 'The saved API Key cannot be decrypted (encryption key changed); enter a new one',
       secretHint: 'Plaintext exists only in this editor and is cleared immediately after a successful save.', clearSecret: 'Explicitly clear the saved API Key', timeout: 'Total timeout (ms)', inputLimit: 'Unicode characters per chunk',
-      toggleNode: 'Toggle node {name}', deleteConfirm: 'Remove “{name}” from the draft? It takes effect after saving.',
+      toggleNode: 'Toggle node {name}', deleteConfirmTitle: 'Remove node?', deleteConfirm: 'Remove “{name}” from the draft? It takes effect after saving.',
     },
     policy: {
       title: 'Audit policy', description: 'Configure group scope, nine input-risk categories, workers, and queue bounds.', scope: 'Scope', allGroups: 'All groups', selectedGroups: 'Selected groups',
@@ -74,7 +74,7 @@ export default {
       selectAll: 'Select all events on this page', selectEvent: 'Select event {id}', time: 'Time', identity: 'User / email / API Key', user: 'Username', email: 'User email', apiKey: 'API Key name', group: 'Group', route: 'Endpoint / model', result: 'Decision / risk', preview: 'Redacted preview', empty: 'No matching events.',
       passEventsDisabled: '“Store safe events” is off. Safe requests are still audited but do not appear in this list; Flag and Critical risk events are still stored.', openConfiguration: 'Open configuration',
       detailTitle: 'Prompt audit event details', tabs: { summary: 'Audit summary', risks: 'Specific risks', technical: 'Technical details' },
-      promptFull: 'Full prompt (unredacted)',
+      promptFull: 'Full unredacted prompt',
       promptFullHint: 'The full prompt is stored with this event for admin review only. Treat it as sensitive data and do not share it.',
       guardReturn: 'Model audit return',
       guardReturnHint: 'Normalized Guard result (decision, categories, scores, and redacted evidence). Raw response bodies are not stored.',

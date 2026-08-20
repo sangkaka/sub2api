@@ -805,6 +805,7 @@ export default {
       loadFailed: '加载 Passkey 失败。',
       added: 'Passkey 已添加。',
       addFailed: '添加 Passkey 失败。',
+      renameTitle: '重命名 Passkey',
       renamePrompt: '请输入新的 Passkey 名称',
       renamed: 'Passkey 已重命名。',
       renameFailed: '重命名 Passkey 失败。',

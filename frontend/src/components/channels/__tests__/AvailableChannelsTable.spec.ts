@@ -27,6 +27,7 @@ describe('AvailableChannelsTable scroll integration', () => {
   })
 
   it('does not clip content with its own overflow-hidden card wrapper', () => {
+    expect(componentSource).not.toMatch(/class="table-wrapper card overflow-hidden"/)
     expect(componentSource).not.toMatch(/<div class="card overflow-hidden">/)
   })
 })

@@ -3,6 +3,7 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,10 +12,96 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
+
+func TestForwardAsResponsesKiroDirectUsesResponsesCacheProfile(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	resetKiroCacheTracker()
+
+	account := &Account{
+		ID:          301,
+		Name:        "kiro-responses-cache",
+		Platform:    PlatformKiro,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"access_token": "kiro-access-token",
+			"profile_arn":  "arn:aws:codewhisperer:us-east-1:123456789012:profile/RESPONSECACHE",
+		},
+	}
+	group := kiroCacheGroup(1)
+	body := kiroResponsesCacheRequestBody("gateway", "workspace-gateway", "resp-gateway")
+	parsed, err := ParseGatewayRequest(NewRequestBodyRef(body), "responses")
+	require.NoError(t, err)
+	parsed.Group = group
+
+	upstream := &queuedHTTPUpstream{responses: []*http.Response{
+		kiroResponsesCacheUpstreamResponse(t, 5),
+		kiroResponsesCacheUpstreamResponse(t, 7),
+	}}
+	svc := &GatewayService{
+		cfg: &config.Config{Gateway: config.GatewayConfig{
+			StreamDataIntervalTimeout: 0,
+			MaxLineSize:               defaultMaxLineSize,
+		}},
+		httpUpstream:        upstream,
+		kiroCooldownStore:   &stubKiroCooldownStore{},
+		tlsFPProfileService: &TLSFingerprintProfileService{},
+		rateLimitService:    &RateLimitService{},
+	}
+
+	firstCtx, firstRec := newResponsesGatewayTestContext()
+	firstResult, err := svc.ForwardAsResponses(firstCtx.Request.Context(), firstCtx, account, body, parsed)
+	require.NoError(t, err)
+	require.Equal(t, 0, firstResult.Usage.CacheReadInputTokens)
+	require.Greater(t, firstResult.Usage.CacheCreationInputTokens, 0)
+	require.Equal(t, firstResult.Usage.CacheCreationInputTokens, int(gjson.Get(firstRec.Body.String(), "usage.cache_creation_input_tokens").Int()))
+	require.False(t, gjson.Get(firstRec.Body.String(), "usage.input_tokens_details.cached_tokens").Exists())
+
+	secondCtx, secondRec := newResponsesGatewayTestContext()
+	secondResult, err := svc.ForwardAsResponses(secondCtx.Request.Context(), secondCtx, account, body, parsed)
+	require.NoError(t, err)
+	require.Greater(t, secondResult.Usage.CacheReadInputTokens, 0)
+	require.Equal(t, 0, secondResult.Usage.CacheCreationInputTokens)
+	require.Equal(t, secondResult.Usage.CacheReadInputTokens, int(gjson.Get(secondRec.Body.String(), "usage.input_tokens_details.cached_tokens").Int()))
+	require.Equal(t, 0, int(gjson.Get(secondRec.Body.String(), "usage.cache_creation_input_tokens").Int()))
+	require.Len(t, upstream.requests, 2)
+}
+
+func newResponsesGatewayTestContext() (*gin.Context, *httptest.ResponseRecorder) {
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	return c, rec
+}
+
+func kiroResponsesCacheUpstreamResponse(t *testing.T, outputTokens int) *http.Response {
+	t.Helper()
+	var upstreamBody bytes.Buffer
+	_, _ = upstreamBody.Write(buildKiroEventStreamFrame(t, "assistantResponseEvent", map[string]any{
+		"assistantResponseEvent": map[string]any{"content": "hello"},
+	}))
+	_, _ = upstreamBody.Write(buildKiroEventStreamFrame(t, "messageMetadataEvent", map[string]any{
+		"messageMetadataEvent": map[string]any{
+			"tokenUsage": map[string]any{
+				"uncachedInputTokens": 99,
+				"outputTokens":        outputTokens,
+			},
+		},
+	}))
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/vnd.amazon.eventstream"}},
+		Body:       io.NopCloser(&upstreamBody),
+	}
+}
 
 func TestAdaptResponsesClientToolsForAnthropic_FlattensNamespace(t *testing.T) {
 	t.Parallel()

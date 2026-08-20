@@ -95,6 +95,7 @@
     <!-- Quick Actions -->
     <div class="mb-4 flex flex-wrap gap-2">
       <button
+        v-if="showSyncActions"
         type="button"
         @click="fillRelated"
         class="rounded-lg border border-blue-200 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-900/30"
@@ -102,7 +103,7 @@
         {{ t('admin.accounts.fillRelatedModels') }}
       </button>
       <button
-        v-if="canSyncUpstream"
+        v-if="showSyncActions && canSyncUpstream"
         type="button"
         @click="syncUpstreamModels"
         :disabled="isSyncingUpstream"
@@ -157,10 +158,12 @@ import { allModels, getModelsByPlatform } from '@/composables/useModelWhitelist'
 
 const { t } = useI18n()
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: string[]
   platform?: string
   platforms?: string[]
+  availableModels?: string[]
+  showSyncActions?: boolean
   accountId?: number
   syncCredentials?: {
     platform: string
@@ -168,7 +171,9 @@ const props = defineProps<{
     base_url?: string
     api_key: string
   }
-}>()
+}>(), {
+  showSyncActions: true
+})
 
 const emit = defineEmits<{
   'update:modelValue': [value: string[]]
@@ -221,6 +226,11 @@ const canSyncUpstream = computed(() => {
 })
 
 const availableOptions = computed(() => {
+  if (props.availableModels !== undefined) {
+    return Array.from(new Set(props.availableModels.map(model => model.trim()).filter(Boolean)))
+      .sort()
+      .map(model => ({ value: model, label: model }))
+  }
   if (normalizedPlatforms.value.length === 0) {
     return allModels
   }
@@ -232,7 +242,9 @@ const availableOptions = computed(() => {
     }
   }
 
-  return allModels.filter(model => allowedModels.has(model.value))
+  return Array.from(allowedModels)
+    .sort()
+    .map(model => ({ value: model, label: model }))
 })
 
 const filteredModels = computed(() => {

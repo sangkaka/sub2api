@@ -87,6 +87,17 @@
       </div>
     </template>
   </BaseDialog>
+
+  <ConfirmDialog
+    :show="showConfirm"
+    :title="t('admin.users.bulkLimits.title')"
+    :message="confirmMessage"
+    :confirm-text="t('common.confirm')"
+    :cancel-text="t('common.cancel')"
+    data-test="bulk-confirm"
+    @confirm="confirmSubmit"
+    @cancel="cancelConfirm"
+  />
 </template>
 
 <script setup lang="ts">
@@ -96,6 +107,7 @@ import { adminAPI } from '@/api/admin'
 import type { BatchUpdateUserLimitsRequest } from '@/api/admin/users'
 import { useAppStore } from '@/stores/app'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
 
 const props = defineProps<{
@@ -115,6 +127,9 @@ const enableRPMLimit = ref(false)
 const concurrencyValue = ref<string | number>('')
 const rpmLimitValue = ref<string | number>('')
 const submitting = ref(false)
+const showConfirm = ref(false)
+const confirmMessage = ref('')
+const pendingRequest = ref<BatchUpdateUserLimitsRequest | null>(null)
 const MAX_BATCH_USER_IDS = 500
 
 const parseLimit = (value: string | number): number | null | undefined => {
@@ -153,6 +168,9 @@ const reset = () => {
   concurrencyValue.value = ''
   rpmLimitValue.value = ''
   submitting.value = false
+  showConfirm.value = false
+  confirmMessage.value = ''
+  pendingRequest.value = null
 }
 
 watch(
@@ -185,13 +203,27 @@ const handleSubmit = async () => {
     )
   }
 
-  const confirmed = window.confirm(
-    t('admin.users.bulkLimits.confirm', {
-      count: props.selectedIds.length,
-      fields: fields.join(', ')
-    })
-  )
-  if (!confirmed) return
+  pendingRequest.value = request
+  confirmMessage.value = t('admin.users.bulkLimits.confirm', {
+    count: props.selectedIds.length,
+    fields: fields.join(', ')
+  })
+  showConfirm.value = true
+}
+
+const cancelConfirm = () => {
+  showConfirm.value = false
+  confirmMessage.value = ''
+  pendingRequest.value = null
+}
+
+const confirmSubmit = async () => {
+  const request = pendingRequest.value
+  if (!request || submitting.value) return
+
+  showConfirm.value = false
+  confirmMessage.value = ''
+  pendingRequest.value = null
 
   submitting.value = true
   try {

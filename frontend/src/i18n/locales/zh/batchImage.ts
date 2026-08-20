@@ -207,6 +207,8 @@ export default {
       errorCodeRef: '错误码：{code}',
       requestIdRef: '请求 ID：{id}',
       httpStatusRef: 'HTTP 状态：{status}',
+      cancelTitle: '取消任务',
+      deleteTitle: '删除记录',
     },
   },
 }
