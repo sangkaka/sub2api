@@ -112,6 +112,11 @@ const form = reactive({
   customAttributes: {} as UserAttributeValuesMap
 })
 
+const roleOptions = computed<SelectOption[]>(() => [
+  { value: 'user', label: t('admin.users.roles.user') },
+  { value: 'admin', label: t('admin.users.roles.admin') },
+])
+
 watch(() => props.user, (u) => {
   if (u) {
     Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', role: u.role || 'user', concurrency: u.concurrency, rpm_limit: u.rpm_limit ?? 0, customAttributes: {} })
