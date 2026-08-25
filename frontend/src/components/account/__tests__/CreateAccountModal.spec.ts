@@ -7,15 +7,15 @@ const {
   probeUpstreamBillingMock,
   importCodexSessionMock,
   createOpenAICodexPATMock,
-  authIsSimpleMode,
   generateKiroIDCAuthUrlMock,
+  authIsSimpleMode,
 } = vi.hoisted(() => ({
   createAccountMock: vi.fn(),
   probeUpstreamBillingMock: vi.fn(),
   importCodexSessionMock: vi.fn(),
   createOpenAICodexPATMock: vi.fn(),
-  authIsSimpleMode: { value: true },
   generateKiroIDCAuthUrlMock: vi.fn(),
+  authIsSimpleMode: { value: true },
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -96,26 +96,6 @@ const OAuthAuthorizationFlowStub = defineComponent({
   `,
 })
 
-const GroupSelectorStub = defineComponent({
-  name: 'GroupSelector',
-  props: {
-    modelValue: {
-      type: Array,
-      default: () => [],
-    },
-  },
-  emits: ['update:modelValue'],
-  template: `
-    <button
-      type="button"
-      data-testid="select-pricing-groups"
-      @click="$emit('update:modelValue', [1, 2])"
-    >
-      groups
-    </button>
-  `,
-})
-
 const SelectStub = defineComponent({
   name: 'SelectStub',
   props: {
@@ -140,6 +120,26 @@ const SelectStub = defineComponent({
       </option>
     </select>
   `
+})
+
+const GroupSelectorStub = defineComponent({
+  name: 'GroupSelector',
+  props: {
+    modelValue: {
+      type: Array,
+      default: () => [],
+    },
+  },
+  emits: ['update:modelValue'],
+  template: `
+    <button
+      type="button"
+      data-testid="select-pricing-groups"
+      @click="$emit('update:modelValue', [1, 2])"
+    >
+      groups
+    </button>
+  `,
 })
 
 const ModelWhitelistSelectorStub = defineComponent({

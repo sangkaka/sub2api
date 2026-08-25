@@ -109,6 +109,11 @@ export const FeatureFlags = {
     mode: 'opt-in',
     label: 'Model Plaza',
   }),
+  pluginManagement: defineFlag({
+    key: 'plugin_management_enabled',
+    mode: 'opt-in',
+    label: 'Plugin Management',
+  }),
   payment: defineFlag({
     key: 'payment_enabled',
     mode: 'opt-out',
@@ -188,10 +193,10 @@ export function isChannelMonitorThroughputHidden(): boolean {
 }
 
 /**
- * Show quota/balance snapshots on the user-facing monitor page
- * (channel_monitor_show_quota, default off). The backend strips
- * latest_quota server-side when the switch is off; this flag is
- * defense-in-depth only. Admin views always show quota.
+ * Show full quota/balance snapshots on the user-facing monitor page
+ * (channel_monitor_show_quota, default off). Group-level account
+ * counts can still appear when this is off; the backend redacts
+ * tiers/balances. Admin views always show quota.
  */
 export function isChannelMonitorQuotaVisible(): boolean {
   const appStore = useAppStore()
