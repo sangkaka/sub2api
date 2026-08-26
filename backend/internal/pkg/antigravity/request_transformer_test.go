@@ -424,6 +424,122 @@ func TestTransformClaudeToGeminiWithOptions_PreservesBillingHeaderSystemBlock(t 
 	}
 }
 
+func transformSystemInstructionText(t *testing.T, system json.RawMessage) string {
+	t.Helper()
+	claudeReq := &ClaudeRequest{
+		Model:  "claude-sonnet-4-6",
+		System: system,
+		Messages: []ClaudeMessage{
+			{
+				Role:    "user",
+				Content: json.RawMessage(`[{"type":"text","text":"hello"}]`),
+			},
+		},
+	}
+	body, err := TransformClaudeToGeminiWithOptions(claudeReq, "project-1", "claude-sonnet-4-6", DefaultTransformOptions())
+	require.NoError(t, err)
+	var req V1InternalRequest
+	require.NoError(t, json.Unmarshal(body, &req))
+	require.NotNil(t, req.Request.SystemInstruction)
+	var b strings.Builder
+	for _, part := range req.Request.SystemInstruction.Parts {
+		b.WriteString(part.Text)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func TestTransformClaudeToGeminiWithOptions_StripsClaudeCodeIdentityBlocks(t *testing.T) {
+	const agentSDKIdentity = "You are a Claude agent, built on Anthropic's Claude Agent SDK."
+	const cliIdentity = "You are Claude Code, Anthropic's official CLI for Claude."
+	const exploreIdentity = "You are a file search specialist for Claude Code, Anthropic's official CLI for Claude."
+	const billing = "x-anthropic-billing-header: cc_version=2.1.246.27a; cc_entrypoint=sdk-cli;"
+	const mainPrompt = "You are an interactive agent that helps users according to your Output Style."
+	longPrompt := strings.Repeat("Keep this project instruction. ", 12) + agentSDKIdentity + " Continue following user rules."
+
+	tests := []struct {
+		name    string
+		system  json.RawMessage
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "agent SDK identity array block",
+			system:  json.RawMessage(`[{"type":"text","text":"` + agentSDKIdentity + `"}]`),
+			notWant: []string{agentSDKIdentity},
+		},
+		{
+			name:    "agent SDK identity string",
+			system:  json.RawMessage(`"` + agentSDKIdentity + `"`),
+			notWant: []string{agentSDKIdentity},
+		},
+		{
+			name:    "classic CLI identity",
+			system:  json.RawMessage(`[{"type":"text","text":"` + cliIdentity + `"}]`),
+			notWant: []string{cliIdentity},
+		},
+		{
+			name:    "explore specialist identity",
+			system:  json.RawMessage(`[{"type":"text","text":"` + exploreIdentity + `"}]`),
+			notWant: []string{exploreIdentity},
+		},
+		{
+			name: "billing + identity + main prompt",
+			system: json.RawMessage(`[
+				{"type":"text","text":"` + billing + `"},
+				{"type":"text","text":"` + agentSDKIdentity + `"},
+				{"type":"text","text":"` + mainPrompt + `"}
+			]`),
+			want:    []string{billing, mainPrompt},
+			notWant: []string{agentSDKIdentity},
+		},
+		{
+			name:   "long prompt that quotes the identity sentence is kept",
+			system: json.RawMessage(`[{"type":"text","text":"` + longPrompt + `"}]`),
+			want:   []string{longPrompt},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := transformSystemInstructionText(t, tt.system)
+			for _, s := range tt.want {
+				require.Contains(t, got, s)
+			}
+			for _, s := range tt.notWant {
+				require.NotContains(t, got, s)
+			}
+		})
+	}
+
+	t.Run("identity in messages system role", func(t *testing.T) {
+		claudeReq := &ClaudeRequest{
+			Model: "claude-sonnet-4-6",
+			Messages: []ClaudeMessage{
+				{
+					Role:    "system",
+					Content: json.RawMessage(`[{"type":"text","text":"` + agentSDKIdentity + `"}]`),
+				},
+				{
+					Role:    "user",
+					Content: json.RawMessage(`"hello"`),
+				},
+			},
+		}
+		body, err := TransformClaudeToGeminiWithOptions(claudeReq, "project-1", "claude-sonnet-4-6", DefaultTransformOptions())
+		require.NoError(t, err)
+		var req V1InternalRequest
+		require.NoError(t, json.Unmarshal(body, &req))
+		var b strings.Builder
+		if req.Request.SystemInstruction != nil {
+			for _, part := range req.Request.SystemInstruction.Parts {
+				b.WriteString(part.Text)
+			}
+		}
+		require.NotContains(t, b.String(), agentSDKIdentity)
+	})
+}
+
 func TestTransformClaudeToGeminiWithOptions_MessageRoles(t *testing.T) {
 	transform := func(t *testing.T, claudeReq *ClaudeRequest) V1InternalRequest {
 		t.Helper()

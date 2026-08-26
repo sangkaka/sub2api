@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -296,6 +297,40 @@ func filterOpenCodePrompt(text string) string {
 	return ""
 }
 
+// claudeCodeIdentityMaxLen 限制身份过滤只作用于短 system block。
+// Claude Code 把身份做成独立的 62 字符块；主提示词是另一块、可达数十 KB。
+// 超过此长度即使以身份句开头也不剥，避免误删长指令。
+const claudeCodeIdentityMaxLen = 200
+
+// claudeCodeIdentityPatterns 对齐 ccx LevelCCIdentity：剥 CC 身份，保留 billing header。
+var claudeCodeIdentityPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`^You are Claude Code, Anthropic's official CLI for Claude\.`),
+	regexp.MustCompile(`^You are a Claude agent, built on Anthropic's Claude Agent SDK\.`),
+	regexp.MustCompile(`^You are an? .+ (?:specialist|agent) for Claude Code`),
+}
+
+func isClaudeCodeIdentityBlock(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || len(trimmed) > claudeCodeIdentityMaxLen {
+		return false
+	}
+	for _, pattern := range claudeCodeIdentityPatterns {
+		if pattern.MatchString(trimmed) {
+			return true
+		}
+	}
+	return false
+}
+
+// filterUserSystemText 在发往 Google 之前清洗用户 system：OpenCode 前言 + CC 身份短块。
+func filterUserSystemText(text string) string {
+	filtered := filterOpenCodePrompt(text)
+	if isClaudeCodeIdentityBlock(filtered) {
+		return ""
+	}
+	return filtered
+}
+
 // buildSystemInstruction 构建 systemInstruction（与 Antigravity-Manager 保持一致）
 func buildSystemInstruction(system json.RawMessage, modelName string, opts TransformOptions, tools []ClaudeTool) *GeminiContent {
 	var parts []GeminiPart
@@ -312,8 +347,7 @@ func buildSystemInstruction(system json.RawMessage, modelName string, opts Trans
 				if strings.Contains(sysStr, "You are Antigravity") {
 					userHasAntigravityIdentity = true
 				}
-				// 过滤 OpenCode 默认提示词
-				filtered := filterOpenCodePrompt(sysStr)
+				filtered := filterUserSystemText(sysStr)
 				if filtered != "" {
 					userSystemParts = append(userSystemParts, GeminiPart{Text: filtered})
 				}
@@ -327,8 +361,7 @@ func buildSystemInstruction(system json.RawMessage, modelName string, opts Trans
 						if strings.Contains(block.Text, "You are Antigravity") {
 							userHasAntigravityIdentity = true
 						}
-						// 过滤 OpenCode 默认提示词
-						filtered := filterOpenCodePrompt(block.Text)
+						filtered := filterUserSystemText(block.Text)
 						if filtered != "" {
 							userSystemParts = append(userSystemParts, GeminiPart{Text: filtered})
 						}
@@ -395,7 +428,15 @@ func buildContents(messages []ClaudeMessage, toolIDToName map[string]string, isT
 		}
 
 		if role == "system" {
-			systemParts = append(systemParts, parts...)
+			for _, p := range parts {
+				if p.Text != "" {
+					p.Text = filterUserSystemText(p.Text)
+					if p.Text == "" {
+						continue
+					}
+				}
+				systemParts = append(systemParts, p)
+			}
 			continue
 		}
 
