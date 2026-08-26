@@ -191,6 +191,29 @@ func ProvideOpenAIQuotaService(
 	return service
 }
 
+// ProvideOpenAIQuotaAutoResetService 启动账号级自动用卡队列与补偿扫描。
+func ProvideOpenAIQuotaAutoResetService(
+	accountRepo AccountRepository,
+	quotaService *OpenAIQuotaService,
+	rateLimitService *RateLimitService,
+	idempotency *IdempotencyCoordinator,
+	audit *AuditLogService,
+	settingService *SettingService,
+	leaderLock LeaderLockCache,
+) *OpenAIQuotaAutoResetService {
+	service := NewOpenAIQuotaAutoResetService(
+		accountRepo,
+		quotaService,
+		rateLimitService,
+		idempotency,
+		audit,
+		settingService,
+		leaderLock,
+	)
+	service.Start()
+	return service
+}
+
 func ProvideAccountUsageService(
 	accountRepo AccountRepository,
 	usageLogRepo UsageLogRepository,
@@ -235,6 +258,7 @@ func ProvideAccountTestService(
 	tlsFPProfileService *TLSFingerprintProfileService,
 	openAIGatewayService *OpenAIGatewayService,
 	settingService *SettingService,
+	pluginManager *PluginManager,
 ) *AccountTestService {
 	service := NewAccountTestService(
 		accountRepo,
@@ -249,6 +273,7 @@ func ProvideAccountTestService(
 	)
 	service.agentIdentityWS = openAIGatewayService
 	service.SetSettingService(settingService)
+	service.SetPluginManager(pluginManager)
 	return service
 }
 
@@ -865,6 +890,7 @@ var ProviderSet = wire.NewSet(
 	ProvideGrokTokenProvider,
 	ProvideOpenAITokenProvider,
 	ProvideOpenAIQuotaService,
+	ProvideOpenAIQuotaAutoResetService,
 	ProvideGrokQuotaService,
 	ProvideCNProviderQuotaService,
 	ProvideCNProviderBalanceService,
@@ -921,6 +947,7 @@ var ProviderSet = wire.NewSet(
 	NewErrorPassthroughService,
 	NewPromptRuleService,
 	NewTLSFingerprintProfileService,
+	NewPluginManager,
 	NewDigestSessionStore,
 	ProvideIdempotencyCoordinator,
 	ProvideSystemOperationLockService,
@@ -931,6 +958,7 @@ var ProviderSet = wire.NewSet(
 	NewChannelService,
 	wire.Bind(new(ChannelCacheInvalidator), new(*ChannelService)),
 	NewModelPricingResolver,
+	NewModelPlazaService,
 	NewContentModerationService,
 	NewAffiliateService,
 	ProvidePaymentConfigService,
