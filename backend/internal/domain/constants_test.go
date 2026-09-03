@@ -149,10 +149,17 @@ func TestDefaultAntigravityModelMapping_Gemini31ProAliases(t *testing.T) {
 }
 
 func TestDefaultAntigravityModelMapping_Gemini36FlashModels(t *testing.T) {
-	for _, model := range []string{"gemini-3.6-flash", "gemini-3.6-flash-high", "gemini-3.6-flash-low", "gemini-3.6-flash-medium", "gemini-3.6-flash-tiered"} {
+	for _, model := range []string{"gemini-3.6-flash-high", "gemini-3.6-flash-low", "gemini-3.6-flash-medium", "gemini-3.6-flash-tiered"} {
 		if got := DefaultAntigravityModelMapping[model]; got != model {
 			t.Fatalf("expected %s to map to itself, got %q", model, got)
 		}
+	}
+	// The bare "gemini-3.6-flash" id (no tier suffix) is what Antigravity CLI sends when
+	// the user has not picked a specific tier. The real upstream only recognizes the
+	// tiered variants -- passthrough here 404s (confirmed 2026-09-03 via production
+	// request logs), so it must route to "-tiered" instead of mapping to itself.
+	if got := DefaultAntigravityModelMapping["gemini-3.6-flash"]; got != "gemini-3.6-flash-tiered" {
+		t.Fatalf("expected gemini-3.6-flash to map to gemini-3.6-flash-tiered, got %q", got)
 	}
 }
 

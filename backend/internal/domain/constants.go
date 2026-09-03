@@ -139,8 +139,12 @@ var DefaultAntigravityModelMapping = map[string]string{
 	"gemini-3.1-flash-image": "gemini-3.1-flash-image",
 	// Gemini 3.1 image preview 映射
 	"gemini-3.1-flash-image-preview": "gemini-3.1-flash-image",
-	// Gemini 3.6 Flash tiered models
-	"gemini-3.6-flash":        "gemini-3.6-flash",
+	// Gemini 3.6 Flash tiered models. The bare "gemini-3.6-flash" id (no
+	// -low/-high/-medium suffix) is what Antigravity CLI sends when the user has not
+	// picked a specific tier; the real upstream only recognizes the tiered variants, so
+	// this must route to "-tiered" rather than passing through unchanged (2026-09-03,
+	// confirmed via production request logs: passthrough here 404s upstream, tiered 200s).
+	"gemini-3.6-flash":        "gemini-3.6-flash-tiered",
 	"gemini-3.6-flash-high":   "gemini-3.6-flash-high",
 	"gemini-3.6-flash-low":    "gemini-3.6-flash-low",
 	"gemini-3.6-flash-medium": "gemini-3.6-flash-medium",
