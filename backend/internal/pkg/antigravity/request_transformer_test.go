@@ -443,8 +443,8 @@ func transformSystemInstructionText(t *testing.T, system json.RawMessage) string
 	require.NotNil(t, req.Request.SystemInstruction)
 	var b strings.Builder
 	for _, part := range req.Request.SystemInstruction.Parts {
-		b.WriteString(part.Text)
-		b.WriteByte('\n')
+		_, _ = b.WriteString(part.Text)
+		_ = b.WriteByte('\n')
 	}
 	return b.String()
 }
@@ -533,7 +533,7 @@ func TestTransformClaudeToGeminiWithOptions_StripsClaudeCodeIdentityBlocks(t *te
 		var b strings.Builder
 		if req.Request.SystemInstruction != nil {
 			for _, part := range req.Request.SystemInstruction.Parts {
-				b.WriteString(part.Text)
+				_, _ = b.WriteString(part.Text)
 			}
 		}
 		require.NotContains(t, b.String(), agentSDKIdentity)
