@@ -12,6 +12,7 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -55,10 +56,14 @@ func TestEstimateImageTokensUsesDimensionsNotEncodedLength(t *testing.T) {
 	var flatPNG bytes.Buffer
 	require.NoError(t, png.Encode(&flatPNG, flat))
 
+	// 用固定种子的伪随机噪声而不是 (x, y, x^y) 这类规律图案：go1.27 的 png 编码器
+	// 能把规律图案压得比纯色图还小，让"噪声图编码更长"这个前置条件失效。
 	noisy := image.NewRGBA(image.Rect(0, 0, 512, 512))
+	rng := rand.New(rand.NewPCG(20260904, 1))
 	for y := 0; y < 512; y++ {
 		for x := 0; x < 512; x++ {
-			noisy.SetRGBA(x, y, color.RGBA{R: uint8(x), G: uint8(y), B: uint8(x ^ y), A: 255})
+			v := rng.Uint32()
+			noisy.SetRGBA(x, y, color.RGBA{R: uint8(v), G: uint8(v >> 8), B: uint8(v >> 16), A: 255})
 		}
 	}
 	var noisyPNG bytes.Buffer
