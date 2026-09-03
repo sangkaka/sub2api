@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "dk-workflow 机检门禁清单（dk-run-checks --stage <N> 读取）。",
+    "只放在本机能确定性通过的检查：go build 与 go vet 覆盖整个 backend。",
+    "单测/集成测试故意不放进来：upstream 的 TestPluginPackageInstaller* 在 Windows 上",
+    "必红（rename 前句柄未关，Linux CI 正常），放进来门禁就永远过不了；",
+    "完整测试以 GitHub Actions 的 CI 为准（make test-unit / test-integration）。",
+    "argv 不走 shell，所以进入 backend/ 与 go 不在 PATH 时的回退逻辑放在",
+    ".claude/dk-check-go.sh 里（回退到 %LOCALAPPDATA%\\Programs\\Go\\bin，其他平台不受影响）。",
+    "不要为了让门禁变绿而塞空检查：results 为空时 overall 是 unknown，不等于 pass。"
+  ],
+  "version": 1,
+  "checks": {
+    "build": {
+      "_comment": "整个后端能编译（含 ent/wire 生成物是否与 schema 一致）",
+      "argv": ["bash", ".claude/dk-check-go.sh", "build"],
+      "stages": [3, 4, 5],
+      "timeout": 600
+    },
+    "vet": {
+      "_comment": "go vet ./...（本机没装 golangci-lint 时的最低静态检查）",
+      "argv": ["bash", ".claude/dk-check-go.sh", "vet"],
+      "stages": [4, 5],
+      "timeout": 900
+    }
+  }
+}

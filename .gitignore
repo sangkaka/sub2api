@@ -120,7 +120,11 @@ tests
 !deploy/tests/
 !deploy/tests/**
 CLAUDE.md
-.claude
+# fork：.claude/ 下只入库同步命令与 dk-workflow 门禁配置，个人文件（settings.local.json 等）仍忽略
+.claude/*
+!.claude/commands/
+!.claude/dk-checks.json
+!.claude/dk-check-go.sh
 scripts
 !backend/scripts/
 !backend/scripts/resolve-version.sh
