@@ -139,12 +139,27 @@ var DefaultAntigravityModelMapping = map[string]string{
 	"gemini-3.1-flash-image": "gemini-3.1-flash-image",
 	// Gemini 3.1 image preview 映射
 	"gemini-3.1-flash-image-preview": "gemini-3.1-flash-image",
-	// Gemini 3.6 Flash tiered models
-	"gemini-3.6-flash":        "gemini-3.6-flash",
+	// Gemini 3.1 Flash Lite（Antigravity CLI 的会话标题生成固定请求 -preview 名，上游只认不带 -preview 的）
+	"gemini-3.1-flash-lite":         "gemini-3.1-flash-lite",
+	"gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite",
+	// Gemini 3.6 Flash tiered models（裸名是 Antigravity CLI 未选档位时发的，上游只认 -tiered）
+	"gemini-3.6-flash":        "gemini-3.6-flash-tiered",
 	"gemini-3.6-flash-high":   "gemini-3.6-flash-high",
 	"gemini-3.6-flash-low":    "gemini-3.6-flash-low",
 	"gemini-3.6-flash-medium": "gemini-3.6-flash-medium",
 	"gemini-3.6-flash-tiered": "gemini-3.6-flash-tiered",
+	// Gemini 3.7 / 3.8 Flash：上游只有 -tiered 一个真实模型，档位由请求里的 thinkingBudget 决定，
+	// CLI 发的裸名与 -low/-medium/-high 全部收敛到 -tiered（裸档位名上游 404）
+	"gemini-3.7-flash":        "gemini-3.7-flash-tiered",
+	"gemini-3.7-flash-high":   "gemini-3.7-flash-tiered",
+	"gemini-3.7-flash-low":    "gemini-3.7-flash-tiered",
+	"gemini-3.7-flash-medium": "gemini-3.7-flash-tiered",
+	"gemini-3.7-flash-tiered": "gemini-3.7-flash-tiered",
+	"gemini-3.8-flash":        "gemini-3.8-flash-tiered",
+	"gemini-3.8-flash-high":   "gemini-3.8-flash-tiered",
+	"gemini-3.8-flash-low":    "gemini-3.8-flash-tiered",
+	"gemini-3.8-flash-medium": "gemini-3.8-flash-tiered",
+	"gemini-3.8-flash-tiered": "gemini-3.8-flash-tiered",
 	// Gemini 3 image 兼容映射（向 3.1 image 迁移）
 	"gemini-3-pro-image":         "gemini-3.1-flash-image",
 	"gemini-3-pro-image-preview": "gemini-3.1-flash-image",

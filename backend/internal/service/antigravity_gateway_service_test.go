@@ -1963,3 +1963,42 @@ func generateLargeUnwrapJSON(minSize int) []byte {
 	b, _ := json.Marshal(outer)
 	return b
 }
+
+// TestHandleGeminiStreamingResponse_EventSeparatorIsExactlyOneBlankLine
+// 回归：上游每个 data 事件后跟一个空行，转发给客户端后事件之间必须恰好是 "\n\n"，
+// 不能把上游空行再透传成第三个 "\n"。google-genai Go SDK（Antigravity CLI）按 "\n\n"
+// 切事件，多出的 "\n" 会粘到下一个事件开头，被判成 invalid stream chunk。
+func TestHandleGeminiStreamingResponse_EventSeparatorIsExactlyOneBlankLine(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newAntigravityTestService(&config.Config{
+		Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize},
+	})
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	pr, pw := io.Pipe()
+	resp := &http.Response{StatusCode: http.StatusOK, Body: pr, Header: http.Header{}}
+
+	first := `{"candidates":[{"content":{"parts":[{"thought":true,"text":"thinking"}]}}]}`
+	second := `{"candidates":[{"content":{"parts":[{"text":"PONG"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1}}`
+	go func() {
+		defer func() { _ = pw.Close() }()
+		fmt.Fprintln(pw, "data: "+first)
+		fmt.Fprintln(pw, "")
+		fmt.Fprintln(pw, "data: "+second)
+		fmt.Fprintln(pw, "")
+	}()
+
+	_, err := svc.handleGeminiStreamingResponse(c, resp, time.Now())
+	_ = pr.Close()
+	require.NoError(t, err)
+
+	body := rec.Body.String()
+	require.Equal(t, "data: "+first+"\n\ndata: "+second+"\n\n", body)
+	require.NotContains(t, body, "\n\n\n")
+	for _, ev := range strings.Split(strings.TrimSuffix(body, "\n\n"), "\n\n") {
+		require.True(t, strings.HasPrefix(ev, "data:"), "event must start with data:, got %q", ev)
+	}
+}

@@ -149,9 +149,37 @@ func TestDefaultAntigravityModelMapping_Gemini31ProAliases(t *testing.T) {
 }
 
 func TestDefaultAntigravityModelMapping_Gemini36FlashModels(t *testing.T) {
-	for _, model := range []string{"gemini-3.6-flash", "gemini-3.6-flash-high", "gemini-3.6-flash-low", "gemini-3.6-flash-medium", "gemini-3.6-flash-tiered"} {
+	for _, model := range []string{"gemini-3.6-flash-high", "gemini-3.6-flash-low", "gemini-3.6-flash-medium", "gemini-3.6-flash-tiered"} {
 		if got := DefaultAntigravityModelMapping[model]; got != model {
 			t.Fatalf("expected %s to map to itself, got %q", model, got)
+		}
+	}
+	// 裸名是 CLI 未选档位时发的，上游只认 -tiered
+	if got := DefaultAntigravityModelMapping["gemini-3.6-flash"]; got != "gemini-3.6-flash-tiered" {
+		t.Fatalf("expected gemini-3.6-flash to map to gemini-3.6-flash-tiered, got %q", got)
+	}
+}
+
+func TestDefaultAntigravityModelMapping_Gemini37And38FlashCollapseToTiered(t *testing.T) {
+	for _, ver := range []string{"3.7", "3.8"} {
+		want := "gemini-" + ver + "-flash-tiered"
+		for _, suffix := range []string{"", "-high", "-low", "-medium", "-tiered"} {
+			from := "gemini-" + ver + "-flash" + suffix
+			if got := DefaultAntigravityModelMapping[from]; got != want {
+				t.Fatalf("expected %s to map to %s, got %q", from, want, got)
+			}
+		}
+	}
+}
+
+func TestDefaultAntigravityModelMapping_Gemini31FlashLite(t *testing.T) {
+	cases := map[string]string{
+		"gemini-3.1-flash-lite":         "gemini-3.1-flash-lite",
+		"gemini-3.1-flash-lite-preview": "gemini-3.1-flash-lite",
+	}
+	for from, want := range cases {
+		if got := DefaultAntigravityModelMapping[from]; got != want {
+			t.Fatalf("expected %s to map to %s, got %q", from, want, got)
 		}
 	}
 }
