@@ -23,4 +23,11 @@ describe("groups models list layout", () => {
     expect(groupsViewSource).not.toContain("value === 'anthropic' || value === 'kiro'");
     expect(groupsViewSource).not.toContain("group.platform === 'anthropic' || group.platform === 'kiro'");
   });
+
+  it("uses a wide dialog and keeps model pricing controls responsive", () => {
+    expect(groupsViewSource).toContain('width="wide"');
+    expect(groupsViewSource).toContain(
+      "btn btn-secondary shrink-0 whitespace-nowrap",
+    );
+  });
 });

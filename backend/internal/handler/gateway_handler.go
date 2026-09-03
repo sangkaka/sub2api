@@ -197,6 +197,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	body = parsedReq.Body.Bytes()
 	reqModel := parsedReq.Model
 	reqStream := parsedReq.Stream
+	bindRequestedReasoningEffort(c, body, reqModel)
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 
@@ -581,6 +582,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 
+			stampForwardRequestedReasoningEffort(result, service.NormalizeClaudeOutputEffort(parsedReq.OutputEffort))
 			if result.ReasoningEffort == nil {
 				result.ReasoningEffort = service.NormalizeClaudeOutputEffort(parsedReq.OutputEffort)
 			}
@@ -928,6 +930,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				inboundEndpoint := GetInboundEndpoint(c)
 				upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 
+				stampForwardRequestedReasoningEffort(result, service.NormalizeClaudeOutputEffort(attemptParsedReq.OutputEffort))
 				if result.ReasoningEffort == nil {
 					result.ReasoningEffort = service.NormalizeClaudeOutputEffort(attemptParsedReq.OutputEffort)
 				}
@@ -1353,11 +1356,15 @@ func writeGrokModelsList(c *gin.Context, modelIDs []string) {
 		if grokModelSupportsConfigurableReasoning(modelID) {
 			item.SupportsReasoningEffort = true
 			item.ReasoningEffort = "high"
-			item.ReasoningEfforts = []grokReasoningEffortOption{
+			efforts := []grokReasoningEffortOption{
 				{Value: "low", Label: "Low"},
 				{Value: "medium", Label: "Medium"},
 				{Value: "high", Label: "High", Default: true},
 			}
+			if service.GrokSupportsXHighReasoningEffort(modelID) {
+				efforts = append(efforts, grokReasoningEffortOption{Value: "xhigh", Label: "xHigh"})
+			}
+			item.ReasoningEfforts = efforts
 		}
 		models = append(models, item)
 	}

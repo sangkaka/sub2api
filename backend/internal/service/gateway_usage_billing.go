@@ -596,12 +596,9 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 	}
 }
 
-// recordUsageOpts 内部选项，参数化普通计费与长上下文计费的差异点。
+// recordUsageOpts 内部选项，参数化计费差异点。长上下文阶梯计价已改为价格目录
+// 数据驱动（见 Group.LongContextPricingEnabled），不再需要调用方传阈值/倍率。
 type recordUsageOpts struct {
-	// 长上下文计费（仅 Gemini 路径需要）
-	LongContextThreshold  int
-	LongContextMultiplier float64
-
 	// Kiro 账号在上游返回 auto 等无法定价模型时使用保守计费兜底。
 	IsKiroAccount bool
 }
@@ -626,54 +623,6 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 		QuotaPlatform:      input.QuotaPlatform,
 		ChannelUsageFields: input.ChannelUsageFields,
 	}, &recordUsageOpts{})
-}
-
-// RecordUsageLongContextInput 记录使用量的输入参数（支持长上下文双倍计费）
-type RecordUsageLongContextInput struct {
-	Result                *ForwardResult
-	APIKey                *APIKey
-	User                  *User
-	Account               *Account
-	Subscription          *UserSubscription  // 可选：订阅信息
-	PricingAt             time.Time          // token 售价固定时刻；零值保持既有的记录时刻语义
-	InboundEndpoint       string             // 入站端点（客户端请求路径）
-	UpstreamEndpoint      string             // 上游端点（标准化后的上游路径）
-	UserAgent             string             // 请求的 User-Agent
-	IPAddress             string             // 请求的客户端 IP 地址
-	SessionID             string             // 客户端显式会话标识（session_id / X-Session-Id 等请求头），仅用于用量行会话关联
-	RequestPayloadHash    string             // 请求体语义哈希，用于降低 request_id 误复用时的静默误去重风险
-	LongContextThreshold  int                // 长上下文阈值（如 200000）
-	LongContextMultiplier float64            // 超出阈值部分的倍率（如 2.0）
-	ForceCacheBilling     bool               // 强制缓存计费：将 input_tokens 转为 cache_read 计费（用于粘性会话切换）
-	APIKeyService         APIKeyQuotaUpdater // API Key 配额服务（可选）
-	QuotaPlatform         string             // user×platform 配额计量平台：handler 在请求 ctx 内经 QuotaPlatform() 算定后传入（后扣运行在 worker 池 background ctx 上，取不到 ForcePlatform）
-
-	ChannelUsageFields // 渠道映射信息（由 handler 在 Forward 前解析）
-}
-
-// RecordUsageWithLongContext 记录使用量并扣费，支持长上下文双倍计费（用于 Gemini）
-func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *RecordUsageLongContextInput) error {
-	return s.recordUsageCore(ctx, &recordUsageCoreInput{
-		Result:             input.Result,
-		APIKey:             input.APIKey,
-		User:               input.User,
-		Account:            input.Account,
-		Subscription:       input.Subscription,
-		PricingAt:          input.PricingAt,
-		InboundEndpoint:    input.InboundEndpoint,
-		UpstreamEndpoint:   input.UpstreamEndpoint,
-		UserAgent:          input.UserAgent,
-		IPAddress:          input.IPAddress,
-		SessionID:          input.SessionID,
-		RequestPayloadHash: input.RequestPayloadHash,
-		ForceCacheBilling:  input.ForceCacheBilling,
-		APIKeyService:      input.APIKeyService,
-		QuotaPlatform:      input.QuotaPlatform,
-		ChannelUsageFields: input.ChannelUsageFields,
-	}, &recordUsageOpts{
-		LongContextThreshold:  input.LongContextThreshold,
-		LongContextMultiplier: input.LongContextMultiplier,
-	})
 }
 
 // recordUsageCoreInput 是 recordUsageCore 的公共输入字段，从两种输入结构体中提取。
@@ -770,8 +719,7 @@ func logResponseModelBillingApplied(component string, account *Account, requestI
 	slog.Info("billing.response_model_applied", attrs...)
 }
 
-// recordUsageCore 是 RecordUsage 和 RecordUsageWithLongContext 的统一实现。
-// LongContextThreshold > 0 时 Token 计费回退走 CalculateCostWithLongContext。
+// recordUsageCore 是 RecordUsage 的核心实现。
 func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsageCoreInput, opts *recordUsageOpts) error {
 	result := input.Result
 	apiKey := input.APIKey
@@ -876,7 +824,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	// 创建使用日志
 	accountRateMultiplier := account.BillingRateMultiplier()
 	usageLog := s.buildRecordUsageLog(ctx, input, result, apiKey, user, account, subscription,
-		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost, opts)
+		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
 	if apiKey.GroupID != nil {
@@ -936,7 +884,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	return nil
 }
 
-// calculateRecordUsageCost 根据请求类型和选项计算费用。
+// calculateRecordUsageCost 根据请求类型计算费用。
 func (s *GatewayService) calculateRecordUsageCost(
 	ctx context.Context,
 	result *ForwardResult,
@@ -1162,7 +1110,7 @@ func (s *GatewayService) calculateImageCost(
 	return s.billingService.CalculateImageCost(billingModel, sizeTier, result.ImageCount, groupConfig, multiplier)
 }
 
-// calculateTokenCost 计算 Token 计费：路径选择（分组/渠道定价 → 旧长上下文规则 → 内置定价）
+// calculateTokenCost 计算 Token 计费：路径选择（分组/渠道定价 → 内置定价）
 // 统一交给 BillingService.CalculateTokenCostForRequest，与模型广场的阶梯表查询同源。
 func (s *GatewayService) calculateTokenCost(
 	ctx context.Context,
@@ -1188,22 +1136,17 @@ func (s *GatewayService) calculateTokenCost(
 		gid := apiKey.Group.ID
 		resolved = s.resolver.Resolve(ctx, PricingInput{Model: billingModel, GroupID: &gid, Group: apiKey.Group})
 	}
-	var legacy *LegacyLongContextRule
-	if opts.LongContextThreshold > 0 {
-		legacy = &LegacyLongContextRule{Threshold: opts.LongContextThreshold, Multiplier: opts.LongContextMultiplier}
-	}
 
 	cost, err := s.billingService.CalculateTokenCostForRequest(TokenCostRequest{
-		Ctx:               ctx,
-		Model:             billingModel,
-		Group:             apiKey.Group,
-		Tokens:            tokens,
-		RateMultiplier:    multiplier,
-		PricingAt:         pricingAt,
-		ServiceTier:       optionalStringValue(result.ServiceTier),
-		Resolver:          s.resolver,
-		Resolved:          resolved,
-		LegacyLongContext: legacy,
+		Ctx:            ctx,
+		Model:          billingModel,
+		Group:          apiKey.Group,
+		Tokens:         tokens,
+		RateMultiplier: multiplier,
+		PricingAt:      pricingAt,
+		ServiceTier:    optionalStringValue(result.ServiceTier),
+		Resolver:       s.resolver,
+		Resolved:       resolved,
 	})
 	if err != nil {
 		logger.LegacyPrintf("service.gateway", "Calculate cost failed: %v", err)
@@ -1219,14 +1162,6 @@ func (s *GatewayService) calculateTokenCost(
 		cost.BillingMode = string(BillingModeToken)
 	}
 	return cost
-}
-
-// LegacyLongContextRule 透传 BillingService 的平台旧长上下文规则，供入口 handler 取用。
-func (s *GatewayService) LegacyLongContextRule(platform string) *LegacyLongContextRule {
-	if s == nil || s.billingService == nil {
-		return nil
-	}
-	return s.billingService.LegacyLongContextRule(platform)
 }
 
 // buildRecordUsageLog 构建使用日志并设置计费模式。
@@ -1245,7 +1180,6 @@ func (s *GatewayService) buildRecordUsageLog(
 	billingType int8,
 	cacheTTLOverridden bool,
 	cost *CostBreakdown,
-	opts *recordUsageOpts,
 ) *UsageLog {
 	durationMs := int(result.Duration.Milliseconds())
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
@@ -1260,48 +1194,49 @@ func (s *GatewayService) buildRecordUsageLog(
 		)
 	}
 	usageLog := &UsageLog{
-		UserID:                user.ID,
-		APIKeyID:              apiKey.ID,
-		AccountID:             account.ID,
-		RequestID:             requestID,
-		Model:                 result.Model,
-		RequestedModel:        requestedModel,
-		UpstreamModel:         optionalTrimmedStringPtr(result.UpstreamModel),
-		UpstreamResponseModel: optionalTrimmedStringPtr(result.UpstreamResponseModel),
-		UpstreamModelMismatch: upstreamModelMismatch(sentModel, result.UpstreamResponseModel),
-		ServiceTier:           result.ServiceTier,
-		ReasoningEffort:       result.ReasoningEffort,
-		InboundEndpoint:       optionalTrimmedStringPtr(input.InboundEndpoint),
-		UpstreamEndpoint:      optionalTrimmedStringPtr(input.UpstreamEndpoint),
-		InputTokens:           result.Usage.InputTokens,
-		OutputTokens:          result.Usage.OutputTokens,
-		CacheCreationTokens:   result.Usage.CacheCreationInputTokens,
-		CacheReadTokens:       result.Usage.CacheReadInputTokens,
-		CacheCreation5mTokens: result.Usage.CacheCreation5mTokens,
-		CacheCreation1hTokens: result.Usage.CacheCreation1hTokens,
-		ImageOutputTokens:     result.Usage.ImageOutputTokens,
-		RateMultiplier:        multiplier,
-		AccountRateMultiplier: &accountRateMultiplier,
-		BillingType:           billingType,
-		BillingMode:           resolveBillingMode(result, cost),
-		Stream:                result.Stream,
-		DurationMs:            &durationMs,
-		FirstTokenMs:          result.FirstTokenMs,
-		ImageCount:            result.ImageCount,
-		ImageSize:             optionalTrimmedStringPtr(result.ImageSize),
-		ImageInputSize:        optionalTrimmedStringPtr(result.ImageInputSize),
-		ImageOutputSize:       optionalTrimmedStringPtr(result.ImageOutputSize),
-		ImageSizeSource:       optionalTrimmedStringPtr(result.ImageSizeSource),
-		ImageSizeBreakdown:    result.ImageSizeBreakdown,
-		CacheTTLOverridden:    cacheTTLOverridden,
-		ChannelID:             optionalInt64Ptr(input.ChannelID),
-		ModelMappingChain:     optionalTrimmedStringPtr(input.ModelMappingChain),
-		UserAgent:             optionalTrimmedStringPtr(input.UserAgent),
-		IPAddress:             optionalTrimmedStringPtr(input.IPAddress),
-		SessionID:             optionalTrimmedStringPtr(input.SessionID),
-		GroupID:               apiKey.GroupID,
-		SubscriptionID:        optionalSubscriptionID(subscription),
-		CreatedAt:             time.Now(),
+		UserID:                   user.ID,
+		APIKeyID:                 apiKey.ID,
+		AccountID:                account.ID,
+		RequestID:                requestID,
+		Model:                    result.Model,
+		RequestedModel:           requestedModel,
+		UpstreamModel:            optionalTrimmedStringPtr(result.UpstreamModel),
+		UpstreamResponseModel:    optionalTrimmedStringPtr(result.UpstreamResponseModel),
+		UpstreamModelMismatch:    upstreamModelMismatch(sentModel, result.UpstreamResponseModel),
+		ServiceTier:              result.ServiceTier,
+		ReasoningEffort:          result.ReasoningEffort,
+		RequestedReasoningEffort: coalesceRequestedReasoningEffort(result.RequestedReasoningEffort, result.ReasoningEffort),
+		InboundEndpoint:          optionalTrimmedStringPtr(input.InboundEndpoint),
+		UpstreamEndpoint:         optionalTrimmedStringPtr(input.UpstreamEndpoint),
+		InputTokens:              result.Usage.InputTokens,
+		OutputTokens:             result.Usage.OutputTokens,
+		CacheCreationTokens:      result.Usage.CacheCreationInputTokens,
+		CacheReadTokens:          result.Usage.CacheReadInputTokens,
+		CacheCreation5mTokens:    result.Usage.CacheCreation5mTokens,
+		CacheCreation1hTokens:    result.Usage.CacheCreation1hTokens,
+		ImageOutputTokens:        result.Usage.ImageOutputTokens,
+		RateMultiplier:           multiplier,
+		AccountRateMultiplier:    &accountRateMultiplier,
+		BillingType:              billingType,
+		BillingMode:              resolveBillingMode(result, cost),
+		Stream:                   result.Stream,
+		DurationMs:               &durationMs,
+		FirstTokenMs:             result.FirstTokenMs,
+		ImageCount:               result.ImageCount,
+		ImageSize:                optionalTrimmedStringPtr(result.ImageSize),
+		ImageInputSize:           optionalTrimmedStringPtr(result.ImageInputSize),
+		ImageOutputSize:          optionalTrimmedStringPtr(result.ImageOutputSize),
+		ImageSizeSource:          optionalTrimmedStringPtr(result.ImageSizeSource),
+		ImageSizeBreakdown:       result.ImageSizeBreakdown,
+		CacheTTLOverridden:       cacheTTLOverridden,
+		ChannelID:                optionalInt64Ptr(input.ChannelID),
+		ModelMappingChain:        optionalTrimmedStringPtr(input.ModelMappingChain),
+		UserAgent:                optionalTrimmedStringPtr(input.UserAgent),
+		IPAddress:                optionalTrimmedStringPtr(input.IPAddress),
+		SessionID:                optionalTrimmedStringPtr(input.SessionID),
+		GroupID:                  apiKey.GroupID,
+		SubscriptionID:           optionalSubscriptionID(subscription),
+		CreatedAt:                time.Now(),
 	}
 	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
