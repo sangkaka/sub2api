@@ -1866,6 +1866,11 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	if a == nil {
 		return false
 	}
+	if capability == OpenAIEndpointCapabilitySeedance {
+		configured, _ := a.openAIEndpointCapabilitySet()
+		return configured["seedance"] && a.Platform == PlatformOpenAI && a.Type == AccountTypeAPIKey &&
+			strings.TrimSpace(a.GetCredential("base_url")) != ""
+	}
 	if capability == "" {
 		return true
 	}
@@ -2120,6 +2125,19 @@ func (a *Account) IsOveragesEnabled() bool {
 		}
 	}
 	return false
+}
+
+const codexTelemetryEnabledExtraKey = "codex_telemetry_enabled"
+
+// IsCodexTelemetryEnabled reports whether this OpenAI OAuth account opted into
+// simulated Codex client telemetry. Missing or non-bool extra is off. Setup
+// tokens, API keys, Agent Identity, and other platforms cannot enable it.
+func (a *Account) IsCodexTelemetryEnabled() bool {
+	if a == nil || !a.IsOpenAIOAuth() || a.IsOpenAIAgentIdentity() || a.Extra == nil {
+		return false
+	}
+	enabled, ok := a.Extra[codexTelemetryEnabledExtraKey].(bool)
+	return ok && enabled
 }
 
 // IsOpenAIPassthroughEnabled 返回 OpenAI 账号是否启用"自动透传（仅替换认证）"。

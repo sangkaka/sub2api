@@ -270,3 +270,32 @@ go vet  -tags=e2e ./...
 新增的 Kiro 迁移：`135` / `145` / `151` / `152` / `153`×2 / `192` / `227` / `239`×2
 （`239_add_kiro_to_platform_checks.sql` 与 kiro 的 `239_fork_platform_constraints_superset.sql`，
 后者按文件名序在后、且是前者的超集，终态以后者为准）。
+
+### kiro 侧 lint 宽于本仓：每次同步都要预留一次 lint 收尾
+
+`nianzs/sub2api` 的 golangci 配置比本仓宽，它那边绿的代码合进来后，本仓 CI 的
+`golangci-lint` job（v2.13，`--timeout=30m`）会直接红。这不是合并冲突处理不当，
+是两边 lint 基线不同，**属于每次同步的固定收尾步骤，要预留出来**：
+
+- v0.2.5 同步后：`f10898207` 清了 6 条。
+- v0.2.7 同步后：清了 23 条（errcheck 16 / gofmt 2 / staticcheck 5），
+  集中在 kiro 新带进来的 Adobe 渠道与 Codex telemetry 文件。
+
+反复出现的三类，按这些既定写法修，不要自创风格：
+
+| 类别 | 本仓写法 |
+| --- | --- |
+| `bytes.Buffer` / `strings.Builder` 的 `Write*` 返回值（errcheck） | 补 `_, _ =`（`WriteByte` 单返回值用 `_ =`）；这些方法的 err 文档保证恒为 nil，不要真去判 |
+| `defer resp.Body.Close()`（errcheck） | 改 `defer func() { _ = resp.Body.Close() }()` |
+| 错误串首字母大写（staticcheck ST1005） | 一律小写开头，含品牌名也一样：`errors.New("adobe ...")`，与 `account_repo.go` / `adobe_gateway_token.go` 既有写法一致 |
+
+两个容易踩的点：
+
+1. **errcheck 的 `check-type-assertions` 会分批暴露**。修掉一批裸类型断言后，
+   下一次跑会报出之前被掩盖的几处，容易陷入 push → CI 红 → 再修的循环。
+   测试里有成串链式断言时（典型如 OTLP payload 逐层取值），一次性换成
+   `t.Helper()` 断言助手（见 `openai_codex_telemetry_test.go` 的
+   `otlpMap` / `otlpSlice` / `otlpFloat`），别逐行补 comma-ok。
+2. **本机装一个与 CI 同版本的 golangci-lint 再动手**，否则只能靠 CI 反馈：
+   `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.0`
+   （版本以 `.github/workflows/backend-ci.yml` 里 `golangci-lint-action` 的 `version` 为准）。
