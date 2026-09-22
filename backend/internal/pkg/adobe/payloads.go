@@ -58,7 +58,6 @@ func gptImageDetailLevelFromQuality(qualityLevel string, max int) int {
 	}
 }
 
-
 // seedNow 生成提交用的随机种子（复刻上游前端的取值方式）。
 func seedNow() int { return int(timeNow().Unix() % 999999) }
 
@@ -515,7 +514,7 @@ func marshalPayloadJSON(payload map[string]any) ([]byte, error) {
 		return []byte("null"), nil
 	}
 	var buf bytes.Buffer
-	buf.WriteByte('{')
+	_ = buf.WriteByte('{')
 	written := make(map[string]bool, len(payload))
 	first := true
 	write := func(key string) error {
@@ -525,7 +524,7 @@ func marshalPayloadJSON(payload map[string]any) ([]byte, error) {
 		}
 		written[key] = true
 		if !first {
-			buf.WriteByte(',')
+			_ = buf.WriteByte(',')
 		}
 		first = false
 		keyJSON, err := json.Marshal(key)
@@ -536,9 +535,9 @@ func marshalPayloadJSON(payload map[string]any) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-		buf.Write(keyJSON)
-		buf.WriteByte(':')
-		buf.Write(valJSON)
+		_, _ = buf.Write(keyJSON)
+		_ = buf.WriteByte(':')
+		_, _ = buf.Write(valJSON)
 		return nil
 	}
 	for _, key := range payloadKeyOrder {
@@ -558,6 +557,6 @@ func marshalPayloadJSON(payload map[string]any) ([]byte, error) {
 			return nil, err
 		}
 	}
-	buf.WriteByte('}')
+	_ = buf.WriteByte('}')
 	return buf.Bytes(), nil
 }

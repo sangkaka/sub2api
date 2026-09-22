@@ -1642,7 +1642,7 @@ func (s *GatewayService) resolveCompositeModelOwnership(ctx context.Context, gro
 		if !isConcreteRequestPlatform(platform) {
 			continue
 		}
-		if !explicitModelMappingClaims(account, model) && !(sharedGeminiImage && defaultMappingClaimsSharedGeminiImage(&account, model)) {
+		if !explicitModelMappingClaims(account, model) && (!sharedGeminiImage || !defaultMappingClaimsSharedGeminiImage(&account, model)) {
 			continue
 		}
 		platforms[platform] = struct{}{}

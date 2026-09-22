@@ -33,7 +33,7 @@ func ParseAdobeGeminiImageRequest(model string, body []byte) (*OpenAIImagesReque
 
 	if tools := gjson.GetBytes(body, "tools"); tools.Exists() {
 		if (tools.IsArray() && len(tools.Array()) > 0) || tools.IsObject() {
-			return nil, nil, fmt.Errorf("Adobe generateContent does not support tools")
+			return nil, nil, fmt.Errorf("adobe generateContent does not support tools")
 		}
 	}
 
@@ -63,7 +63,7 @@ func ParseAdobeGeminiImageRequest(model string, body []byte) (*OpenAIImagesReque
 		}
 		for _, part := range parts.Array() {
 			if part.Get("functionCall").Exists() || part.Get("function_call").Exists() {
-				return nil, nil, fmt.Errorf("Adobe generateContent does not support function calls")
+				return nil, nil, fmt.Errorf("adobe generateContent does not support function calls")
 			}
 			if !skipText {
 				if text := strings.TrimSpace(part.Get("text").String()); text != "" {
@@ -85,7 +85,7 @@ func ParseAdobeGeminiImageRequest(model string, body []byte) (*OpenAIImagesReque
 
 	prompt := strings.TrimSpace(strings.Join(texts, "\n"))
 	if prompt == "" && len(uploads) == 0 && len(imageURLs) == 0 {
-		return nil, nil, fmt.Errorf("Adobe generateContent requires a text prompt or a reference image")
+		return nil, nil, fmt.Errorf("adobe generateContent requires a text prompt or a reference image")
 	}
 
 	n := 1
@@ -98,7 +98,7 @@ func ParseAdobeGeminiImageRequest(model string, body []byte) (*OpenAIImagesReque
 			return nil, nil, fmt.Errorf("candidateCount must be greater than 0")
 		}
 		if n > adobeGeminiMaxCandidateCount {
-			return nil, nil, fmt.Errorf("Adobe generateContent candidateCount must be between 1 and %d, got %d", adobeGeminiMaxCandidateCount, n)
+			return nil, nil, fmt.Errorf("adobe generateContent candidateCount must be between 1 and %d, got %d", adobeGeminiMaxCandidateCount, n)
 		}
 	}
 
@@ -173,7 +173,7 @@ func validateAdobeGeminiResponseModalities(modalities gjson.Result) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("Adobe generateContent requires IMAGE in responseModalities")
+	return fmt.Errorf("adobe generateContent requires IMAGE in responseModalities")
 }
 
 func collectGeminiPartTexts(node gjson.Result) []string {
@@ -243,7 +243,7 @@ func parseAdobeGeminiImagePart(part gjson.Result) (*OpenAIImagesUpload, string, 
 	if strings.HasPrefix(strings.ToLower(uri), "https://") {
 		return nil, uri, nil
 	}
-	return nil, "", fmt.Errorf("Adobe generateContent only accepts https fileData.fileUri, got %q", uri)
+	return nil, "", fmt.Errorf("adobe generateContent only accepts https fileData.fileUri, got %q", uri)
 }
 
 func decodeAdobeGeminiInlineImage(raw string) ([]byte, error) {
@@ -290,7 +290,7 @@ func adobeGeminiOutputFormat(mimeType string) (string, error) {
 	case "image/jpeg", "image/jpg":
 		return adobeOutputFormatJPEG, nil
 	default:
-		return "", fmt.Errorf("Adobe generateContent does not support responseMimeType %q", strings.TrimSpace(mimeType))
+		return "", fmt.Errorf("adobe generateContent does not support responseMimeType %q", strings.TrimSpace(mimeType))
 	}
 }
 
@@ -347,7 +347,7 @@ func ValidateAdobeGeminiModel(model string) error {
 		return nil
 	}
 	if platform, ok := DetectModelPlatform(id); ok && platform != PlatformAdobe {
-		return fmt.Errorf("Adobe generateContent requires an image model, got %q", id)
+		return fmt.Errorf("adobe generateContent requires an image model, got %q", id)
 	}
 	return nil
 }
@@ -436,9 +436,9 @@ func adobeGeminiImagePart(image AdobeGeminiImage) (map[string]any, error) {
 func EncodeGeminiGenerateContentSSE(body []byte) []byte {
 	var buf bytes.Buffer
 	buf.Grow(len(body) + 8)
-	buf.WriteString("data: ")
-	buf.Write(body)
-	buf.WriteString("\n\n")
+	_, _ = buf.WriteString("data: ")
+	_, _ = buf.Write(body)
+	_, _ = buf.WriteString("\n\n")
 	return buf.Bytes()
 }
 

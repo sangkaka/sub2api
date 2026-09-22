@@ -117,7 +117,8 @@ func TestCodexTelemetryEventContract(t *testing.T) {
 	if mainTurn["initialization_mode"] != "new" || mainTurn["steer_count"] != 0 || mainTurn["total_tokens"] != int64(20) {
 		t.Fatalf("main turn params = %#v", mainTurn)
 	}
-	if accepted["repo_hash"] != nil || len(accepted["line_fingerprints"].([]any)) != 0 {
+	lineFingerprints, _ := accepted["line_fingerprints"].([]any)
+	if accepted["repo_hash"] != nil || len(lineFingerprints) != 0 {
 		t.Fatalf("accepted fingerprint params = %#v", accepted)
 	}
 }
@@ -158,14 +159,20 @@ func TestCodexTelemetryMetricsContract(t *testing.T) {
 	if err := json.Unmarshal(buildCodexMetricsPayload(testCodexTelemetryProfile(), time.Now(), points), &payload); err != nil {
 		t.Fatalf("decode OTLP payload: %v", err)
 	}
-	resourceMetrics := payload["resourceMetrics"].([]any)
-	scopeMetrics := resourceMetrics[0].(map[string]any)["scopeMetrics"].([]any)
-	metrics := scopeMetrics[0].(map[string]any)["metrics"].([]any)
+	resourceMetrics := otlpSlice(t, payload["resourceMetrics"])
+	if len(resourceMetrics) == 0 {
+		t.Fatalf("OTLP payload has no resourceMetrics")
+	}
+	scopeMetrics := otlpSlice(t, otlpMap(t, resourceMetrics[0])["scopeMetrics"])
+	if len(scopeMetrics) == 0 {
+		t.Fatalf("OTLP payload has no scopeMetrics")
+	}
+	metrics := otlpSlice(t, otlpMap(t, scopeMetrics[0])["metrics"])
 	if len(metrics) != 66 {
 		t.Fatalf("OTLP metric count = %d, want 66", len(metrics))
 	}
 	for _, raw := range metrics {
-		metric := raw.(map[string]any)
+		metric := otlpMap(t, raw)
 		for _, kind := range []string{"sum", "histogram"} {
 			if aggregation, ok := metric[kind].(map[string]any); ok && aggregation["aggregationTemporality"] != float64(1) {
 				t.Fatalf("metric %q is not delta temporality", metric["name"])
@@ -175,19 +182,52 @@ func TestCodexTelemetryMetricsContract(t *testing.T) {
 		if !ok {
 			continue
 		}
-		dataPoint := histogram["dataPoints"].([]any)[0].(map[string]any)
-		buckets := dataPoint["bucketCounts"].([]any)
+		dataPoints := otlpSlice(t, histogram["dataPoints"])
+		if len(dataPoints) == 0 {
+			t.Fatalf("metric %q has no histogram dataPoints", metric["name"])
+		}
+		dataPoint := otlpMap(t, dataPoints[0])
+		buckets := otlpSlice(t, dataPoint["bucketCounts"])
 		var bucketTotal float64
 		for _, bucket := range buckets {
-			bucketTotal += bucket.(float64)
+			bucketTotal += otlpFloat(t, bucket)
 		}
-		if bucketTotal != dataPoint["count"].(float64) {
+		if bucketTotal != otlpFloat(t, dataPoint["count"]) {
 			t.Fatalf("metric %q bucket total %v != count %v", metric["name"], bucketTotal, dataPoint["count"])
 		}
-		if len(dataPoint["explicitBounds"].([]any)) != len(buckets)-1 {
+		if len(otlpSlice(t, dataPoint["explicitBounds"])) != len(buckets)-1 {
 			t.Fatalf("metric %q bounds/buckets mismatch", metric["name"])
 		}
 	}
+}
+
+// otlpMap / otlpSlice / otlpFloat 把解码后的 OTLP payload 逐层取值，断言失败直接 t.Fatalf，
+// 避免裸类型断言在结构变化时 panic（也满足 errcheck 的 check-type-assertions）。
+func otlpMap(t *testing.T, v any) map[string]any {
+	t.Helper()
+	m, ok := v.(map[string]any)
+	if !ok {
+		t.Fatalf("expected object, got %T (%#v)", v, v)
+	}
+	return m
+}
+
+func otlpSlice(t *testing.T, v any) []any {
+	t.Helper()
+	s, ok := v.([]any)
+	if !ok {
+		t.Fatalf("expected array, got %T (%#v)", v, v)
+	}
+	return s
+}
+
+func otlpFloat(t *testing.T, v any) float64 {
+	t.Helper()
+	f, ok := v.(float64)
+	if !ok {
+		t.Fatalf("expected number, got %T (%#v)", v, v)
+	}
+	return f
 }
 
 func TestCodexTelemetryMetricAggregationKeepsObservations(t *testing.T) {

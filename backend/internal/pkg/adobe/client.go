@@ -281,8 +281,8 @@ func (c *Client) GenerateImage(ctx context.Context, input GenerateImageInput) (*
 
 // GenerateVideoInput 是一次视频生成请求。
 type GenerateVideoInput struct {
-	Token        string
-	Options      VideoPayloadOptions
+	Token   string
+	Options VideoPayloadOptions
 	// ARPSessionID 是账号里保存的 Sherlock x-arp-session-id；空则回落到 BuildARPSessionID stub。
 	ARPSessionID string
 	Timeout      time.Duration
