@@ -60,16 +60,7 @@ func (s *GatewayService) ForwardAsResponses(
 	clientStream := responsesReq.Stream
 
 	// 3. Convert Responses → Anthropic
-	anthropicReq, err := apicompat.ResponsesToAnthropicRequest(&responsesReq)
-	if err != nil {
-		return nil, fmt.Errorf("convert responses to anthropic: %w", err)
-	}
-
-	// 3. Force upstream streaming (Anthropic works best with streaming)
-	anthropicReq.Stream = true
-	reqStream := true
-
-	// 4. Model mapping
+	// Resolve the final upstream model before model-specific conversion.
 	mappedModel := originalModel
 	if account.Platform == PlatformKiro {
 		if next := account.GetMappedModel(originalModel); next != "" {
@@ -89,6 +80,25 @@ func (s *GatewayService) ForwardAsResponses(
 			mappedModel = normalized
 		}
 	}
+	if err := validateClaudeOpus55Request(body, mappedModel); err != nil {
+		writeResponsesError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil, err
+	}
+	responsesReq.Model = mappedModel
+	anthropicReq, err := apicompat.ResponsesToAnthropicRequest(&responsesReq)
+	if err != nil {
+		if claude.IsOpus55(mappedModel) {
+			writeResponsesError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		}
+		return nil, fmt.Errorf("convert responses to anthropic: %w", err)
+	}
+	anthropicReq.Stream = true
+	reqStream := true
+
+	reasoningEffort := ExtractResponsesReasoningEffortFromBody(body, mappedModel, originalModel)
+	// 国产模型默认 effort 补充：需要 mappedModel 判定，推迟到 mapping 完成之后。
+	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, mappedModel)
+
 	// 4b. Codex remote compaction v2：input 里带 compaction_trigger 的请求不是普通
 	// 轮次，而是"把前文压缩成摘要"。Anthropic 协议族没有原生 compact 端点，转换器
 	// 已把触发器降级成摘要指令（见 apicompat.CompactionSummaryPrompt），这里只需把
@@ -145,14 +155,6 @@ func (s *GatewayService) ForwardAsResponses(
 	// 7. Enforce cache_control block limit
 	anthropicBody = enforceCacheControlLimit(anthropicBody)
 
-	// Bill the final Anthropic effort after conversion and account normalization.
-	// For example, OpenAI xhigh is forwarded as output_config.effort=max. Kiro 直连账号
-	// 绕过 buildUpstreamRequest（它对 kiro 直接返回错误），所以这里统一从 anthropicBody
-	// 取值——buildUpstreamRequest 返回的 forwardedBody 只是经 stripDeferredToolCacheControl
-	// 处理过的同一份 body，不影响 output_config.effort 字段。
-	reasoningEffort := NormalizeClaudeOutputEffort(gjson.GetBytes(anthropicBody, "output_config.effort").String())
-	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, anthropicBody, mappedModel)
-
 	var resp *http.Response
 	if isKiroDirectModeAccount(account) {
 		var group *Group
@@ -190,7 +192,7 @@ func (s *GatewayService) ForwardAsResponses(
 
 		// 10. Build upstream request
 		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
-		upstreamReq, _, err := s.buildUpstreamRequest(upstreamCtx, c, account, anthropicBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
+		upstreamReq, forwardedBody, err := s.buildUpstreamRequest(upstreamCtx, c, account, anthropicBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
 		releaseUpstreamCtx()
 		if err != nil {
 			return nil, fmt.Errorf("build upstream request: %w", err)
@@ -206,6 +208,10 @@ func (s *GatewayService) ForwardAsResponses(
 				UpstreamURL: safeUpstreamURL(upstreamReq.URL.String()),
 			})
 		}
+		// Bill the final Anthropic effort after conversion and account normalization.
+		// For example, OpenAI xhigh is forwarded as output_config.effort=max.
+		reasoningEffort = NormalizeClaudeOutputEffort(gjson.GetBytes(forwardedBody, "output_config.effort").String())
+		reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, forwardedBody, mappedModel)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -534,6 +540,8 @@ func (s *GatewayService) collectAnthropicResponseFromSSE(
 					finalResp.Content[idx].Text += event.Delta.Text
 				case "thinking_delta":
 					finalResp.Content[idx].Thinking += event.Delta.Thinking
+				case "signature_delta":
+					finalResp.Content[idx].Signature += event.Delta.Signature
 				case "input_json_delta":
 					finalResp.Content[idx].Input = appendRawJSON(finalResp.Content[idx].Input, event.Delta.PartialJSON)
 				}
@@ -575,6 +583,9 @@ func (s *GatewayService) writeResponsesBufferedResult(
 	}
 
 	// Convert to Responses format
+	if claude.IsOpus55(mappedModel) {
+		finalResp.Model = mappedModel
+	}
 	responsesResp := apicompat.AnthropicToResponsesResponseWithCustomTools(finalResp, clientToolMapping.CustomTools)
 	responsesResp.Model = originalModel // Use original model name
 
@@ -635,6 +646,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	state := apicompat.NewAnthropicEventToResponsesState()
 	state.Model = originalModel
 	state.CustomTools = clientToolMapping.CustomTools
+	state.PreserveThinkingSignatures = claude.IsOpus55(mappedModel)
 	clientToolRestorer := apicompat.NewResponsesClientToolStreamRestorer(clientToolMapping)
 	var usage ClaudeUsage
 	var firstTokenMs *int

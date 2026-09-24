@@ -50,16 +50,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 		return nil, fmt.Errorf("convert chat completions to responses: %w", err)
 	}
 
-	anthropicReq, err := apicompat.ResponsesToAnthropicRequest(responsesReq)
-	if err != nil {
-		return nil, fmt.Errorf("convert responses to anthropic: %w", err)
-	}
-
-	// 3. Force upstream streaming
-	anthropicReq.Stream = true
-	reqStream := true
-
-	// 4. Model mapping
+	// Resolve the final upstream model before model-specific conversion.
 	mappedModel := originalModel
 	if account.Platform == PlatformKiro {
 		if next := account.GetMappedModel(originalModel); next != "" {
@@ -79,7 +70,22 @@ func (s *GatewayService) ForwardAsChatCompletions(
 			mappedModel = normalized
 		}
 	}
-	anthropicReq.Model = mappedModel
+	if err := validateClaudeOpus55Request(body, mappedModel); err != nil {
+		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil, err
+	}
+	responsesReq.Model = mappedModel
+	anthropicReq, err := apicompat.ResponsesToAnthropicRequest(responsesReq)
+	if err != nil {
+		if claude.IsOpus55(mappedModel) {
+			writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		}
+		return nil, fmt.Errorf("convert responses to anthropic: %w", err)
+	}
+
+	// 3. Force upstream streaming
+	anthropicReq.Stream = true
+	reqStream := true
 
 	logger.L().Debug("gateway forward_as_chat_completions: model mapping applied",
 		zap.Int64("account_id", account.ID),
@@ -110,15 +116,8 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	// 7. Enforce cache_control block limit
 	anthropicBody = enforceCacheControlLimit(anthropicBody)
 
-	// Bill the final Anthropic effort after conversion and account normalization.
-	// For example, OpenAI xhigh is forwarded as output_config.effort=max.
-	// Kiro 直连账号绕过 buildUpstreamRequest（它对 kiro 直接返回错误），所以这里统一从
-	// anthropicBody 取值——buildUpstreamRequest 返回的 forwardedBody 只是经
-	// stripDeferredToolCacheControl 处理过的同一份 body，不影响 output_config.effort 字段。
-	reasoningEffort := NormalizeClaudeOutputEffort(gjson.GetBytes(anthropicBody, "output_config.effort").String())
-	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, anthropicBody, mappedModel)
-
 	var resp *http.Response
+	var reasoningEffort *string
 	if isKiroDirectModeAccount(account) {
 		var group *Group
 		if parsed != nil {
@@ -155,7 +154,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 
 		// 10. Build upstream request
 		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
-		upstreamReq, _, err := s.buildUpstreamRequest(upstreamCtx, c, account, anthropicBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
+		upstreamReq, forwardedBody, err := s.buildUpstreamRequest(upstreamCtx, c, account, anthropicBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
 		releaseUpstreamCtx()
 		if err != nil {
 			return nil, fmt.Errorf("build upstream request: %w", err)
@@ -171,6 +170,8 @@ func (s *GatewayService) ForwardAsChatCompletions(
 				UpstreamURL: safeUpstreamURL(upstreamReq.URL.String()),
 			})
 		}
+		reasoningEffort = NormalizeClaudeOutputEffort(gjson.GetBytes(forwardedBody, "output_config.effort").String())
+		reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, forwardedBody, mappedModel)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -448,6 +449,15 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	}
 
 	processAnthropicEvent := func(event *apicompat.AnthropicStreamEvent) bool {
+		if event == nil {
+			return false
+		}
+		// Drop Anthropic keepalive pings before OpenAI conversion:
+		// leaking `event: ping` frames crashes OpenAI-stream clients.
+		// Error events must still forward — they carry upstream failures.
+		if event.Type == "ping" {
+			return false
+		}
 		if firstChunk {
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
