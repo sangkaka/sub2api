@@ -155,6 +155,7 @@ docs/*
 !docs/channel-monitor-v2-safe-defaults.md
 !docs/codex-credits.md
 !docs/openai-stale-rate-limit.md
+!docs/CLAUDE_ACCOUNT_CONCURRENCY_RESEARCH.md
 !docs/legal/
 !docs/legal/*.md
 !docs/screenshots/
