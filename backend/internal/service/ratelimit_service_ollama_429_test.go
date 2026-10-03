@@ -132,7 +132,27 @@ func (r *ollama429Repo) bump(acct *Account) {
 func (r *ollama429Repo) GetByID(_ context.Context, id int64) (*Account, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.accounts[id], nil
+	return cloneOllama429Account(r.accounts[id]), nil
+}
+
+// cloneOllama429Account copies the rate-limit generation the probe CAS observes.
+// Returning the stored pointer would let a later re-arm mutate the values already
+// captured in the probe closure, so the stale-callback guard could never see a
+// difference.
+func cloneOllama429Account(src *Account) *Account {
+	if src == nil {
+		return nil
+	}
+	dst := *src
+	dst.RateLimitedAt = cloneTimePtr(src.RateLimitedAt)
+	dst.RateLimitResetAt = cloneTimePtr(src.RateLimitResetAt)
+	if src.Credentials != nil {
+		dst.Credentials = make(map[string]any, len(src.Credentials))
+		for k, v := range src.Credentials {
+			dst.Credentials[k] = v
+		}
+	}
+	return &dst
 }
 
 func (r *ollama429Repo) currentReset(id int64) *time.Time {
@@ -214,8 +234,8 @@ func (r *ollama429Repo) SetRateLimitedIfUnchanged(
 		r.casSkipped++
 		return false, nil
 	}
-	limitedMatch := timePtrEqual(expectedLimitedAt, a.RateLimitedAt)
-	resetMatch := timePtrEqual(expectedResetAt, a.RateLimitResetAt)
+	limitedMatch := rateLimitInstantEqual(expectedLimitedAt, a.RateLimitedAt)
+	resetMatch := rateLimitInstantEqual(expectedResetAt, a.RateLimitResetAt)
 	if !a.UpdatedAt.Equal(expectedUpdatedAt) || !limitedMatch || !resetMatch {
 		r.casSkipped++
 		return false, nil
@@ -228,13 +248,6 @@ func (r *ollama429Repo) SetRateLimitedIfUnchanged(
 }
 
 func ollama429TimePtr(t time.Time) *time.Time { return &t }
-
-func timePtrEqual(a, b *time.Time) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return a.Equal(*b)
-}
 
 // ollama429Fixture builds a started-ish RateLimitService over the given repo and
 // scheduler. runtime blocker is injected so scheduling notifications are visible.
@@ -393,9 +406,14 @@ func TestOllamaProbeCallback_StaleLongDoesNotOverrideNewShort(t *testing.T) {
 
 	svc.handle429(context.Background(), acct, http.Header{}, nil) // schedules gen @5s
 	require.Equal(t, 1, scheduler.count())
+	scheduled := repo.currentReset(acct.ID)
+	require.NotNil(t, scheduled)
 
 	// An admin / newer policy re-arms the account to a fresh SHORT cooldown.
-	newShort := time.Now().Add(5 * time.Second)
+	// Use an explicit earlier instant: a second time.Now()+5s can land on the
+	// same Windows tick as the cooldown just written, which is not a new generation.
+	newShort := scheduled.Add(-time.Second)
+	require.True(t, newShort.After(time.Now()))
 	repo.mutate(acct.ID, func(a *Account) { a.RateLimitResetAt = ollama429TimePtr(newShort) })
 
 	// The old async result reports a long 7d reset; it must not override.
@@ -403,7 +421,7 @@ func TestOllamaProbeCallback_StaleLongDoesNotOverrideNewShort(t *testing.T) {
 	scheduler.fire(acct.ID, oldLong)
 
 	require.Zero(t, repo.casUpdated, "stale long callback must not pass the CAS")
-	require.Greater(t, repo.casSkipped, 0)
+	require.Zero(t, repo.casSkipped, "a changed generation is dropped before the write")
 	reset := repo.currentReset(acct.ID)
 	require.NotNil(t, reset)
 	require.True(t, reset.Equal(newShort), "current reset must remain the new short %v, got %v", newShort, reset)
@@ -620,8 +638,8 @@ func (r *ollama429LinkRepo) SetRateLimitedIfUnchanged(
 		return false, nil
 	}
 	if !a.UpdatedAt.Equal(expectedUpdatedAt) ||
-		!timePtrEqual(expectedLimitedAt, a.RateLimitedAt) ||
-		!timePtrEqual(expectedResetAt, a.RateLimitResetAt) {
+		!rateLimitInstantEqual(expectedLimitedAt, a.RateLimitedAt) ||
+		!rateLimitInstantEqual(expectedResetAt, a.RateLimitResetAt) {
 		return false, nil
 	}
 	a.RateLimitedAt = ollama429TimePtr(time.Now())

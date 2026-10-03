@@ -22,6 +22,13 @@ import (
 
 const ollamaCloudUsageProbeWritebackTimeout = 10 * time.Second
 
+func rateLimitInstantEqual(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Equal(*b)
+}
+
 // ollamaCloudUsageProbeScheduler is the single-method surface RateLimitService
 // needs from the Ollama Cloud usage service. It is optional.
 type ollamaCloudUsageProbeScheduler interface {
@@ -125,8 +132,8 @@ func (s *RateLimitService) scheduleOllamaCloudUsageProbe(account *Account) {
 	expectedResetAt := cloneTimePtr(account.RateLimitResetAt)
 	accepted := s.ollamaCloudUsageProbe.ScheduleOllamaCloudUsageRateLimitProbe(
 		account.ID,
-		func(accountID int64, resetAt time.Time) {
-			s.applyOllamaCloudUsageProbeReset(accountID, fingerprint, expectedLimitedAt, expectedResetAt, resetAt)
+		func(accountID int64, probeReset time.Time) {
+			s.applyOllamaCloudUsageProbeReset(accountID, fingerprint, expectedLimitedAt, expectedResetAt, probeReset)
 		},
 	)
 	if !accepted {
@@ -148,8 +155,9 @@ func (s *RateLimitService) scheduleOllamaCloudUsageProbe(account *Account) {
 //     (disabled/errored since the trigger) or its group fingerprint changed;
 //   - the reset does not extend the trigger's cooldown floor (an explicit
 //     Retry-After or an already-confirmed cooldown must never be shortened);
-//   - the CAS reports no update (the rate-limit generation moved on: a newer 429,
-//     an admin clear, a re-arm, or a concurrent update between the re-read and
+//   - the re-read row no longer carries the trigger generation (a newer 429,
+//     an admin clear, or a re-arm changed RateLimitedAt / RateLimitResetAt);
+//   - the CAS reports no update (a concurrent update between the re-read and
 //     this write, guarded by the row's UpdatedAt).
 //
 // On success the CAS already updated the DB; only the runtime scheduling
@@ -185,6 +193,15 @@ func (s *RateLimitService) applyOllamaCloudUsageProbeReset(
 	}
 	currentFingerprint, valid := ollamaCloudUsageGroupFingerprint(account)
 	if !valid || currentFingerprint != expectedFingerprint {
+		return
+	}
+	// A re-arm replaces the trigger generation's reset. Compare the re-read row,
+	// not only the values captured at schedule time: those stay equal to the
+	// closure and would otherwise let a stale long probe overwrite the new short
+	// cooldown. A usage-snapshot persist bumps UpdatedAt only and is still allowed.
+	// Compare by instant: a repository may hand back a fresh time.Time copy.
+	if !rateLimitInstantEqual(expectedLimitedAt, account.RateLimitedAt) || !rateLimitInstantEqual(expectedResetAt, account.RateLimitResetAt) {
+		slog.Debug("ollama_cloud_usage_probe_reset_skipped_stale", "account_id", accountID)
 		return
 	}
 
