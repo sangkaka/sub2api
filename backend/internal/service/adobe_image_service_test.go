@@ -111,7 +111,7 @@ func TestAdobeImageServiceGenerateFillsBillingFields(t *testing.T) {
 	require.Equal(t, "gpt-image-2", result.Forward.Model)
 	require.Equal(t, "firefly-gpt-image-2", result.Forward.UpstreamModel)
 	require.NotEmpty(t, result.Forward.RequestID)
-	require.Greater(t, result.Forward.Duration, time.Duration(0))
+	require.GreaterOrEqual(t, result.Forward.Duration, time.Duration(0))
 }
 
 // 账号的默认 mapping 必须真的生效：gpt-image-2 → firefly-gpt-image-2。

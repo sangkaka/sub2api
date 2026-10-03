@@ -384,6 +384,8 @@ describe('EditAccountModal', () => {
     authIsSimpleMode.value = true
   })
 
+  afterEach(() => vi.useRealTimers())
+
   it('uses the Kiro direct API-key placeholder when base_url is absent', () => {
     const wrapper = mountModal(buildKiroAPIKeyAccount())
 
@@ -451,8 +453,6 @@ describe('EditAccountModal', () => {
     expect(credentials).not.toHaveProperty('api_region')
     expect(credentials?.region).toBe('eu-central-1')
   })
-
-  afterEach(() => vi.useRealTimers())
 
   it('passes existing non-identity mappings to the whitelist selector and preserves them on save', async () => {
     const account = buildAccount()

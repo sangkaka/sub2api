@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { defineComponent, nextTick } from 'vue'
 
 const { copyToClipboardMock, saveAsMock } = vi.hoisted(() => ({
   copyToClipboardMock: vi.fn().mockResolvedValue(true),
@@ -33,6 +33,29 @@ function readBlobAsText(blob: Blob): Promise<string> {
     reader.readAsText(blob)
   })
 }
+
+// 用原生 select 替身驱动 Select 的 v-model，并保留 option 的 disabled 以便断言
+const SelectStub = defineComponent({
+  name: 'SelectStub',
+  props: {
+    modelValue: {
+      type: [String, Number, Boolean, null],
+      default: ''
+    },
+    options: {
+      type: Array,
+      default: () => []
+    }
+  },
+  emits: ['update:modelValue'],
+  template: `
+    <select :value="modelValue" @change="$emit('update:modelValue', $event.target.value)">
+      <option v-for="option in options" :key="option.value" :value="option.value" :disabled="option.disabled">
+        {{ option.label }}
+      </option>
+    </select>
+  `
+})
 
 describe('UseKeyModal', () => {
   afterEach(() => {
@@ -841,7 +864,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -1012,7 +1036,8 @@ describe('UseKeyModal', () => {
           },
           Icon: {
             template: '<span />'
-          }
+          },
+          Select: SelectStub
         }
       }
     })
@@ -1065,7 +1090,8 @@ describe('UseKeyModal', () => {
         global: {
           stubs: {
             BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
-            Icon: { template: '<span />' }
+            Icon: { template: '<span />' },
+            Select: SelectStub
           }
         }
       })

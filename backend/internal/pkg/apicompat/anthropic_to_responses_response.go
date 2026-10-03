@@ -537,7 +537,9 @@ func anthToResHandleContentBlockStop(evt *AnthropicStreamEvent, state *Anthropic
 
 		// Emit function_call_arguments.done + output item done. Codex needs the
 		// full arguments on both terminal events to deserialize and execute the
-		// call, so carry the accumulated buffer (defaulting to "{}").
+		// call, and clients reconcile the done event against the accumulated
+		// function_call_arguments.delta payloads (inconsistent_tool_call when
+		// they disagree), so carry the accumulated buffer (defaulting to "{}").
 		events = append(events, makeResponsesEvent(state, "response.function_call_arguments.done", &ResponsesStreamEvent{
 			OutputIndex: state.OutputIndex,
 			ItemID:      state.CurrentItemID,
