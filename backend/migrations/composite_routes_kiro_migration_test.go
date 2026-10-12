@@ -35,14 +35,13 @@ func TestCompositeRoutesKiroMigration(t *testing.T) {
 		"CHECK (target_platform IN ('anthropic', 'openai', 'gemini', 'antigravity', 'kiro', 'grok', 'kimi', 'zhipu', 'deepseek'))")
 }
 
-// TestCompositeRouteTargetPlatformFinalStateCoversAllPlatforms 是防回归护栏：
-// 按文件名顺序（= 迁移执行顺序）取最后一个重建该约束的迁移，断言其平台列表
-// 覆盖全部允许平台。
+// TestCompositeRouteTargetPlatformFinalStateCoversAllPlatforms 是防回归护栏。
 //
-// 227 的问题根因是 DROP + 重建时手抄平台列表漏了 kiro，而针对 227 自身的用例
-// 只断言完整字符串匹配当时的 8 平台，无法表达「必须覆盖全集」。此用例校验终态，
-// 任何后续重建该约束却漏平台的迁移都会在这里失败。
+// 243 起 composite_model_routes.target_platform 不再由数据库 CHECK 约束，
+// 改由应用层 domain.IsConcretePlatform 校验。终态是最后一个触碰该约束的迁移
+// 必须是这次 DROP。DROP 之前最后一个重建仍须覆盖当时的全部允许平台。
 func TestCompositeRouteTargetPlatformFinalStateCoversAllPlatforms(t *testing.T) {
+	const droppedAt = "243_drop_platform_check_constraints_after_fork.sql"
 	entries, err := FS.ReadDir(".")
 	require.NoError(t, err)
 
@@ -60,17 +59,30 @@ func TestCompositeRouteTargetPlatformFinalStateCoversAllPlatforms(t *testing.T) 
 	}
 	require.NotEmpty(t, touching, "no migration touches %s", compositeRouteTargetPlatformConstraint)
 	sort.Strings(touching) // 与 ApplyMigrations 的执行顺序一致
-	last := touching[len(touching)-1]
+	require.Equal(t, droppedAt, touching[len(touching)-1],
+		"243 之后不得再触碰 composite_model_routes_target_platform_check")
 
-	body, err := FS.ReadFile(last)
+	var lastRebuild string
+	for _, name := range touching {
+		if name >= droppedAt {
+			break
+		}
+		body, readErr := FS.ReadFile(name)
+		require.NoError(t, readErr)
+		if strings.Contains(string(body), "ADD CONSTRAINT "+compositeRouteTargetPlatformConstraint) {
+			lastRebuild = name
+		}
+	}
+	require.NotEmpty(t, lastRebuild)
+
+	body, err := FS.ReadFile(lastRebuild)
 	require.NoError(t, err)
 	normalized := strings.Join(strings.Fields(string(body)), " ")
 
-	// 取该文件里最后一处 CHECK (target_platform IN (...))，即约束终态。
 	checkRe := regexp.MustCompile(`CHECK \(target_platform IN \(([^)]*)\)\)`)
 	matches := checkRe.FindAllStringSubmatch(normalized, -1)
 	require.NotEmpty(t, matches,
-		"migration %s rebuilds the constraint but has no CHECK (target_platform IN (...))", last)
+		"migration %s rebuilds the constraint but has no CHECK (target_platform IN (...))", lastRebuild)
 
 	var got []string
 	for _, raw := range strings.Split(matches[len(matches)-1][1], ",") {
@@ -81,6 +93,6 @@ func TestCompositeRouteTargetPlatformFinalStateCoversAllPlatforms(t *testing.T) 
 	sort.Strings(got)
 
 	require.Equal(t, expectedCompositeRouteTargetPlatforms, got,
-		"migration %s 定义的平台列表与 service.isConcreteRequestPlatform 不一致；"+
-			"重建 CHECK 约束时必须列出全部允许平台，漏项会让对应平台的 composite 路由无法保存", last)
+		"migration %s 定义的平台列表与 243 之前的允许平台不一致；"+
+			"重建 CHECK 约束时必须列出当时的全部允许平台，漏项会让对应平台的 composite 路由无法保存", lastRebuild)
 }

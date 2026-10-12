@@ -23,22 +23,33 @@ func TestForkPlatformConstraintsSupersetMigration(t *testing.T) {
 	require.Contains(t, sql,
 		"ADD CONSTRAINT channel_monitor_request_templates_provider_check CHECK (provider IN ('openai', 'anthropic', 'gemini', 'grok', 'antigravity', 'kiro', 'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go'))")
 
-	// 必须是最后一个重建平台约束的迁移，否则乱序补跑的旧迁移会在它之后再次收窄约束。
+	// 242_drop 删除配额/组合路由的平台 CHECK 之后，本文件只应是 DROP 之前最后一个
+	// 重建这两处约束的迁移。渠道监控的 provider CHECK 仍由数据库约束，本文件目前
+	// 仍是它的终态；后续若有新迁移重建 channel_monitors_provider_check，必须继续
+	// 覆盖 kiro（不含 adobe，与 239 一致）。
 	entries, err := FS.ReadDir(".")
 	require.NoError(t, err)
-	var touching []string
+	var quotaTouching []string
+	var monitorTouching []string
 	for _, e := range entries {
 		if !strings.HasSuffix(e.Name(), ".sql") {
 			continue
 		}
 		body, err := FS.ReadFile(e.Name())
 		require.NoError(t, err)
-		if strings.Contains(string(body), "ADD CONSTRAINT user_platform_quotas_platform_check") ||
-			strings.Contains(string(body), "ADD CONSTRAINT composite_model_routes_target_platform_check") ||
-			strings.Contains(string(body), "ADD CONSTRAINT channel_monitors_provider_check") {
-			touching = append(touching, e.Name())
+		text := string(body)
+		if strings.Contains(text, "ADD CONSTRAINT user_platform_quotas_platform_check") ||
+			strings.Contains(text, "ADD CONSTRAINT composite_model_routes_target_platform_check") {
+			quotaTouching = append(quotaTouching, e.Name())
+		}
+		if strings.Contains(text, "ADD CONSTRAINT channel_monitors_provider_check") {
+			monitorTouching = append(monitorTouching, e.Name())
 		}
 	}
-	sort.Strings(touching)
-	require.Equal(t, name, touching[len(touching)-1])
+	sort.Strings(quotaTouching)
+	sort.Strings(monitorTouching)
+	require.NotEmpty(t, quotaTouching)
+	require.Equal(t, name, quotaTouching[len(quotaTouching)-1])
+	require.NotEmpty(t, monitorTouching)
+	require.Equal(t, name, monitorTouching[len(monitorTouching)-1])
 }

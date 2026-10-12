@@ -14,5 +14,5 @@ func TestSchedulerSnapshotPlatformsPreserveKiroAndGrok(t *testing.T) {
 	require.Contains(t, platforms, PlatformKiro)
 	require.Contains(t, platforms, PlatformGrok)
 	require.Contains(t, platforms, PlatformAdobe)
-	require.Equal(t, AllowedQuotaPlatforms, platforms)
+	require.ElementsMatch(t, AllowedQuotaPlatforms, platforms)
 }

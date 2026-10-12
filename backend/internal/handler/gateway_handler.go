@@ -1372,7 +1372,12 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 	seen := make(map[string]struct{})
 	models := make([]string, 0)
 	schedulablePlatforms := h.gatewayService.GetSchedulablePlatforms(ctx, groupID)
-	for _, platform := range compositeListedPlatforms {
+	for _, platform := range domain.CompositePrecedencePlatformIDs() {
+		// Kiro is omitted on purpose: its model names collide with Anthropic/OpenAI
+		// and cannot be inferred by DetectModelPlatform.
+		if platform == service.PlatformKiro {
+			continue
+		}
 		if platform == service.PlatformTypeSafe && !includeSystemOne {
 			continue
 		}
@@ -1592,12 +1597,12 @@ func defaultModelIDsForPlatform(platform string) []string {
 	case service.PlatformComposite:
 		ids := make([]string, 0)
 		seen := make(map[string]struct{})
-		// TypeSafe is deliberately absent: jev-latest only works through
+		// TypeSafe is deliberately skipped: jev-latest only works through
 		// /v1/systemone, so the static fallback never advertises it to LLM
 		// clients. compositeAvailableModels lists it when the group can serve it.
 		// Kiro stays out for the same name-collision reason as compositeListedPlatforms.
-		for _, concretePlatform := range compositeListedPlatforms {
-			if concretePlatform == service.PlatformTypeSafe {
+		for _, concretePlatform := range domain.CompositePrecedencePlatformIDs() {
+			if concretePlatform == service.PlatformTypeSafe || concretePlatform == service.PlatformKiro {
 				continue
 			}
 			for _, id := range defaultModelIDsForPlatform(concretePlatform) {

@@ -3,6 +3,7 @@
     <button
       ref="triggerRef"
       type="button"
+      data-select-trigger
       @click="toggle"
       :disabled="disabled"
       :aria-expanded="isOpen"
@@ -54,6 +55,7 @@
           ref="dropdownRef"
           class="select-dropdown-portal"
           :class="[instanceId, size === 'sm' && 'select-dropdown-sm']"
+          :data-select-owner="attrs['data-testid']"
           :style="dropdownStyle"
           role="listbox"
           tabindex="-1"
@@ -123,7 +125,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, useAttrs } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 
@@ -186,6 +188,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const emit = defineEmits<Emits>()
+const attrs = useAttrs()
 
 const isOpen = ref(false)
 const searchQuery = ref('')
