@@ -270,7 +270,6 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 		return
 	}
 
-	account, err := h.geminiCompatService.SelectAccountForModelsEndpoints(c.Request.Context(), apiKey.GroupID)
 	if isAdobeGeminiV1Beta(c, apiKey) {
 		model, ok := h.lookupAdobeGeminiModel(c.Request.Context(), apiKey.GroupID, modelName)
 		if !ok {
@@ -286,6 +285,8 @@ func (h *GatewayHandler) GeminiV1BetaGetModel(c *gin.Context) {
 		c.JSON(http.StatusOK, model)
 		return
 	}
+
+	account, err := h.geminiCompatService.SelectAccountForModelsEndpoints(c.Request.Context(), apiKey.GroupID)
 
 	if err != nil {
 		// 没有 gemini 账户，检查是否有 antigravity 账户可用
