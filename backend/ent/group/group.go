@@ -26,6 +26,8 @@ const (
 	FieldName = "name"
 	// FieldDescription holds the string denoting the description field in the database.
 	FieldDescription = "description"
+	// FieldI18n holds the string denoting the i18n field in the database.
+	FieldI18n = "i18n"
 	// FieldRateMultiplier holds the string denoting the rate_multiplier field in the database.
 	FieldRateMultiplier = "rate_multiplier"
 	// FieldPeakRateEnabled holds the string denoting the peak_rate_enabled field in the database.
@@ -142,22 +144,6 @@ const (
 	FieldMaxReasoningEffortOverLimit = "max_reasoning_effort_over_limit"
 	// FieldReasoningEffortMappings holds the string denoting the reasoning_effort_mappings field in the database.
 	FieldReasoningEffortMappings = "reasoning_effort_mappings"
-	// FieldKiroCacheEmulationEnabled holds the string denoting the kiro_cache_emulation_enabled field in the database.
-	FieldKiroCacheEmulationEnabled = "kiro_cache_emulation_enabled"
-	// FieldKiroAutoStickyEnabled holds the string denoting the kiro_auto_sticky_enabled field in the database.
-	FieldKiroAutoStickyEnabled = "kiro_auto_sticky_enabled"
-	// FieldKiroStickySessionTTLSeconds holds the string denoting the kiro_sticky_session_ttl_seconds field in the database.
-	FieldKiroStickySessionTTLSeconds = "kiro_sticky_session_ttl_seconds"
-	// FieldKiroCacheEmulationRatio holds the string denoting the kiro_cache_emulation_ratio field in the database.
-	FieldKiroCacheEmulationRatio = "kiro_cache_emulation_ratio"
-	// FieldKiroCacheEmulationMode holds the string denoting the kiro_cache_emulation_mode field in the database.
-	FieldKiroCacheEmulationMode = "kiro_cache_emulation_mode"
-	// FieldKiroCacheCreationEmulationRatio holds the string denoting the kiro_cache_creation_emulation_ratio field in the database.
-	FieldKiroCacheCreationEmulationRatio = "kiro_cache_creation_emulation_ratio"
-	// FieldKiroCacheReadEmulationRatio holds the string denoting the kiro_cache_read_emulation_ratio field in the database.
-	FieldKiroCacheReadEmulationRatio = "kiro_cache_read_emulation_ratio"
-	// FieldKiroEndpointMode holds the string denoting the kiro_endpoint_mode field in the database.
-	FieldKiroEndpointMode = "kiro_endpoint_mode"
 	// FieldProfitControlEnabled holds the string denoting the profit_control_enabled field in the database.
 	FieldProfitControlEnabled = "profit_control_enabled"
 	// FieldProfitMinMargin holds the string denoting the profit_min_margin field in the database.
@@ -244,6 +230,7 @@ var Columns = []string{
 	FieldDeletedAt,
 	FieldName,
 	FieldDescription,
+	FieldI18n,
 	FieldRateMultiplier,
 	FieldPeakRateEnabled,
 	FieldPeakStart,
@@ -302,14 +289,6 @@ var Columns = []string{
 	FieldMaxReasoningEffort,
 	FieldMaxReasoningEffortOverLimit,
 	FieldReasoningEffortMappings,
-	FieldKiroCacheEmulationEnabled,
-	FieldKiroAutoStickyEnabled,
-	FieldKiroStickySessionTTLSeconds,
-	FieldKiroCacheEmulationRatio,
-	FieldKiroCacheEmulationMode,
-	FieldKiroCacheCreationEmulationRatio,
-	FieldKiroCacheReadEmulationRatio,
-	FieldKiroEndpointMode,
 	FieldProfitControlEnabled,
 	FieldProfitMinMargin,
 	FieldProfitSafetyBuffer,
@@ -350,6 +329,8 @@ var (
 	UpdateDefaultUpdatedAt func() time.Time
 	// NameValidator is a validator for the "name" field. It is called by the builders before save.
 	NameValidator func(string) error
+	// DefaultI18n holds the default value on creation for the "i18n" field.
+	DefaultI18n domain.GroupI18n
 	// DefaultRateMultiplier holds the default value on creation for the "rate_multiplier" field.
 	DefaultRateMultiplier float64
 	// DefaultPeakRateEnabled holds the default value on creation for the "peak_rate_enabled" field.
@@ -452,26 +433,6 @@ var (
 	MaxReasoningEffortOverLimitValidator func(string) error
 	// DefaultReasoningEffortMappings holds the default value on creation for the "reasoning_effort_mappings" field.
 	DefaultReasoningEffortMappings []domain.ReasoningEffortMapping
-	// DefaultKiroCacheEmulationEnabled holds the default value on creation for the "kiro_cache_emulation_enabled" field.
-	DefaultKiroCacheEmulationEnabled bool
-	// DefaultKiroAutoStickyEnabled holds the default value on creation for the "kiro_auto_sticky_enabled" field.
-	DefaultKiroAutoStickyEnabled bool
-	// DefaultKiroStickySessionTTLSeconds holds the default value on creation for the "kiro_sticky_session_ttl_seconds" field.
-	DefaultKiroStickySessionTTLSeconds int
-	// DefaultKiroCacheEmulationRatio holds the default value on creation for the "kiro_cache_emulation_ratio" field.
-	DefaultKiroCacheEmulationRatio float64
-	// DefaultKiroCacheEmulationMode holds the default value on creation for the "kiro_cache_emulation_mode" field.
-	DefaultKiroCacheEmulationMode string
-	// KiroCacheEmulationModeValidator is a validator for the "kiro_cache_emulation_mode" field. It is called by the builders before save.
-	KiroCacheEmulationModeValidator func(string) error
-	// DefaultKiroCacheCreationEmulationRatio holds the default value on creation for the "kiro_cache_creation_emulation_ratio" field.
-	DefaultKiroCacheCreationEmulationRatio float64
-	// DefaultKiroCacheReadEmulationRatio holds the default value on creation for the "kiro_cache_read_emulation_ratio" field.
-	DefaultKiroCacheReadEmulationRatio float64
-	// DefaultKiroEndpointMode holds the default value on creation for the "kiro_endpoint_mode" field.
-	DefaultKiroEndpointMode string
-	// KiroEndpointModeValidator is a validator for the "kiro_endpoint_mode" field. It is called by the builders before save.
-	KiroEndpointModeValidator func(string) error
 	// DefaultProfitControlEnabled holds the default value on creation for the "profit_control_enabled" field.
 	DefaultProfitControlEnabled bool
 	// DefaultProfitMinMargin holds the default value on creation for the "profit_min_margin" field.
@@ -761,46 +722,6 @@ func ByMaxReasoningEffort(opts ...sql.OrderTermOption) OrderOption {
 // ByMaxReasoningEffortOverLimit orders the results by the max_reasoning_effort_over_limit field.
 func ByMaxReasoningEffortOverLimit(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldMaxReasoningEffortOverLimit, opts...).ToFunc()
-}
-
-// ByKiroCacheEmulationEnabled orders the results by the kiro_cache_emulation_enabled field.
-func ByKiroCacheEmulationEnabled(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldKiroCacheEmulationEnabled, opts...).ToFunc()
-}
-
-// ByKiroAutoStickyEnabled orders the results by the kiro_auto_sticky_enabled field.
-func ByKiroAutoStickyEnabled(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldKiroAutoStickyEnabled, opts...).ToFunc()
-}
-
-// ByKiroStickySessionTTLSeconds orders the results by the kiro_sticky_session_ttl_seconds field.
-func ByKiroStickySessionTTLSeconds(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldKiroStickySessionTTLSeconds, opts...).ToFunc()
-}
-
-// ByKiroCacheEmulationRatio orders the results by the kiro_cache_emulation_ratio field.
-func ByKiroCacheEmulationRatio(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldKiroCacheEmulationRatio, opts...).ToFunc()
-}
-
-// ByKiroCacheEmulationMode orders the results by the kiro_cache_emulation_mode field.
-func ByKiroCacheEmulationMode(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldKiroCacheEmulationMode, opts...).ToFunc()
-}
-
-// ByKiroCacheCreationEmulationRatio orders the results by the kiro_cache_creation_emulation_ratio field.
-func ByKiroCacheCreationEmulationRatio(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldKiroCacheCreationEmulationRatio, opts...).ToFunc()
-}
-
-// ByKiroCacheReadEmulationRatio orders the results by the kiro_cache_read_emulation_ratio field.
-func ByKiroCacheReadEmulationRatio(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldKiroCacheReadEmulationRatio, opts...).ToFunc()
-}
-
-// ByKiroEndpointMode orders the results by the kiro_endpoint_mode field.
-func ByKiroEndpointMode(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldKiroEndpointMode, opts...).ToFunc()
 }
 
 // ByProfitControlEnabled orders the results by the profit_control_enabled field.

@@ -122,20 +122,8 @@
       </ClaudeResetCreditsCell>
     </template>
 
-    <!-- OpenAI Codex accounts: ticket status; usage querying remains OAuth-only. -->
-    <template v-else-if="account.platform === 'openai' && (account.type === 'oauth' || account.type === 'setup-token')">
-      <div v-if="codexTurnTickets.length" class="mb-1 space-y-0.5">
-        <div
-          v-for="ticket in codexTurnTickets"
-          :key="ticket.model"
-          class="flex items-center gap-1 text-[10px] leading-4"
-        >
-          <span class="truncate font-medium text-gray-500 dark:text-gray-400" :title="ticket.model">{{ shortCodexTicketModel(ticket.model) }}</span>
-          <span v-if="ticket.ready" class="text-emerald-600 dark:text-emerald-400">{{ formatCodexTicketRemaining(ticket.remaining_seconds) }}<span v-if="ticket.length" class="ml-0.5 opacity-70">({{ ticket.length }})</span></span>
-          <span v-else-if="ticket.blocked" class="text-amber-600 dark:text-amber-400">{{ t('admin.accounts.openai.codexTurnTicketPaused') }}</span>
-          <span v-else class="text-gray-500">{{ t('admin.accounts.openai.codexTurnTicketMissing') }}</span>
-        </div>
-      </div>
+    <!-- OpenAI OAuth accounts: single source from /usage API -->
+    <template v-else-if="account.platform === 'openai' && account.type === 'oauth'">
       <div v-if="hasOpenAIUsageFallback" class="space-y-1">
         <UsageProgressBar
           v-if="usageInfo?.five_hour"
@@ -204,7 +192,6 @@
         <div class="text-xs text-gray-400">-</div>
         <!-- Always allow on-demand upstream quota query, even before local data exists. -->
         <OpenAIQuotaResetCell
-          v-if="account.type === 'oauth'"
           :account="account"
           class="mt-1"
           @account-updated="handleQuotaResetAccountUpdated"
@@ -502,6 +489,7 @@
         </span>
         <!-- Help icon -->
         <span
+          v-if="showGeminiQuotaPolicy"
           class="group relative cursor-help"
         >
           <svg
@@ -592,134 +580,10 @@
           </p>
         </div>
         <!-- AI Studio Client OAuth: show unlimited flow (no usage tracking) -->
-        <div v-else class="text-xs text-gray-400">
+        <div v-else-if="!showGeminiTodayStats" class="text-xs text-gray-400">
           {{ t('admin.accounts.gemini.rateLimit.unlimited') }}
         </div>
       </div>
-    </template>
-
-    <!-- Kiro platform: show credits + bonus (仅直连 AWS;外部中转账号不展示 credits) -->
-    <template v-else-if="isKiroUsageAccount">
-      <div v-if="loading" class="space-y-1.5">
-        <div class="h-4 w-24 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-        <div class="space-y-1">
-          <div class="h-1.5 w-32 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
-          <div class="h-1.5 w-28 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
-        </div>
-      </div>
-      <div v-else-if="error" class="text-xs text-red-500">
-        {{ error }}
-      </div>
-      <div v-else-if="kiroUsageAvailable || kiroStatusBadgeLabel" class="space-y-2">
-        <div v-if="kiroStatusBadgeLabel" class="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span
-            :class="[
-              'inline-flex items-center gap-1 text-[10px] font-medium',
-              kiroStatusToneClass
-            ]"
-            :title="usageInfo?.error || undefined"
-          >
-            <span class="h-1.5 w-1.5 rounded-full bg-current opacity-80"></span>
-            {{ kiroStatusBadgeLabel }}
-          </span>
-        </div>
-
-        <div v-if="kiroStatusHint" class="text-[9px] leading-tight text-gray-500 dark:text-gray-400">
-          {{ kiroStatusHint }}
-        </div>
-
-        <div v-if="usageInfo?.kiro_credit" class="space-y-1">
-          <div class="flex items-baseline justify-between gap-2 text-[11px] text-gray-600 dark:text-gray-300">
-            <span class="font-medium tracking-[0.01em]">{{ t('admin.accounts.usageWindow.kiroCredits') }}</span>
-            <span class="font-semibold tabular-nums text-gray-700 dark:text-gray-200">{{ formatKiroAmount(usageInfo.kiro_credit.current_usage) }} / {{ formatKiroAmount(usageInfo.kiro_credit.usage_limit) }}</span>
-          </div>
-          <div class="h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-            <div class="h-full rounded-full bg-amber-500 transition-all" :style="{ width: `${kiroCreditPercent}%` }"></div>
-          </div>
-        </div>
-
-        <div v-if="usageInfo?.kiro_bonus" class="space-y-1">
-          <div class="flex items-baseline justify-between gap-2 text-[11px] text-gray-600 dark:text-gray-300">
-            <span class="font-medium tracking-[0.01em]">{{ t('admin.accounts.usageWindow.kiroBonus') }}</span>
-            <span class="font-semibold tabular-nums text-gray-700 dark:text-gray-200">{{ formatKiroAmount(usageInfo.kiro_bonus.current_usage) }} / {{ formatKiroAmount(usageInfo.kiro_bonus.usage_limit) }}</span>
-          </div>
-          <div class="h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-            <div class="h-full rounded-full bg-emerald-500 transition-all" :style="{ width: `${kiroBonusPercent}%` }"></div>
-          </div>
-          <div v-if="kiroBonusMeta" class="text-[9px] leading-tight text-gray-500 dark:text-gray-400">
-            {{ kiroBonusMeta }}
-          </div>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-gray-500 dark:text-gray-400">
-          <span v-if="kiroResetDisplay" class="inline-flex items-center gap-1">
-            <span class="text-gray-400 dark:text-gray-500">{{ t('admin.accounts.usageWindow.kiroReset') }}</span>
-            <span class="font-medium tabular-nums text-gray-600 dark:text-gray-300">{{ kiroResetDisplay }}</span>
-          </span>
-        </div>
-        <div class="flex items-center gap-1.5 mt-0.5">
-          <button
-            type="button"
-            class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors"
-            :disabled="activeQueryLoading"
-            @click="loadActiveUsage"
-          >
-            <svg
-              class="h-2.5 w-2.5"
-              :class="{ 'animate-spin': activeQueryLoading }"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
-            {{ t('admin.accounts.usageWindow.activeQuery') }}
-          </button>
-        </div>
-      </div>
-      <div v-else class="text-xs text-gray-400">-</div>
-    </template>
-
-    <!-- Adobe OAuth accounts: 展示 planCap + credits/balance 顶栏 -->
-    <template v-else-if="isAdobeUsageAccount">
-      <div v-if="loading" class="space-y-1.5">
-        <div class="h-4 w-24 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
-        <div class="h-1.5 w-32 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
-      </div>
-      <div v-else-if="error" class="text-xs text-red-500">
-        {{ error }}
-      </div>
-      <div v-else-if="adobeUsageAvailable" class="space-y-2">
-        <div v-if="usageInfo?.adobe_plan_cap" class="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span
-            class="inline-flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 dark:bg-gray-700 dark:text-gray-200"
-          >
-            <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.usageWindow.adobePlanCap') }}</span>
-            <span>{{ usageInfo.adobe_plan_cap }}</span>
-          </span>
-        </div>
-        <div v-if="usageInfo?.adobe_credit" class="space-y-1">
-          <div class="flex items-baseline justify-between gap-2 text-[11px] text-gray-600 dark:text-gray-300">
-            <span class="font-medium tracking-[0.01em]">{{ t('admin.accounts.usageWindow.adobeCredits') }}</span>
-            <span class="font-semibold tabular-nums text-gray-700 dark:text-gray-200">{{ formatKiroAmount(usageInfo.adobe_credit.current_usage) }} / {{ formatKiroAmount(usageInfo.adobe_credit.usage_limit) }}</span>
-          </div>
-          <div class="h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-            <div class="h-full rounded-full bg-adobe-500 transition-all" :style="{ width: `${adobeCreditPercent}%` }"></div>
-          </div>
-        </div>
-        <div v-if="adobeResetDisplay" class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-gray-500 dark:text-gray-400">
-          <span class="inline-flex items-center gap-1">
-            <span class="text-gray-400 dark:text-gray-500">{{ t('admin.accounts.usageWindow.adobeReset') }}</span>
-            <span class="font-medium tabular-nums text-gray-600 dark:text-gray-300">{{ adobeResetDisplay }}</span>
-          </span>
-        </div>
-      </div>
-      <div v-else class="text-xs text-gray-400">-</div>
     </template>
 
     <!-- Other accounts: no usage window -->
@@ -731,7 +595,7 @@
   <!-- Non-OAuth/Setup-Token accounts -->
   <div ref="rootRef" v-else>
     <!-- Gemini API Key accounts: show quota info -->
-    <AccountQuotaInfo v-if="account.platform === 'gemini'" :account="account" />
+    <AccountQuotaInfo v-if="account.platform === 'gemini' && !isGeminiThirdPartyApiKey" :account="account" />
     <!-- Key/Bedrock accounts: show today stats + optional quota bars -->
     <div v-else class="space-y-1">
       <OllamaCloudUsageCell
@@ -817,9 +681,9 @@ import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
-import { isKiroDirectApiKeyAccount } from '@/utils/kiroAccount'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
 import { formatCompactNumber } from '@/utils/format'
+import { isOfficialGeminiBaseUrl } from '@/utils/geminiExplicitCache'
 import UsageProgressBar from './UsageProgressBar.vue'
 import AccountQuotaInfo from './AccountQuotaInfo.vue'
 import ClaudeResetCreditsCell from './ClaudeResetCreditsCell.vue'
@@ -862,7 +726,6 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  kiroUsageMeta: [meta: { plan_type?: string }]
   'account-updated': [account: Account]
   'usage-loaded': [usage: AccountUsageInfo]
 }>()
@@ -882,9 +745,7 @@ watch(usageInfo, (usage) => {
 })
 const rootRef = ref<HTMLElement | null>(null)
 const isDesktopViewport = ref(
-  typeof window === 'undefined' || typeof window.matchMedia !== 'function'
-    ? true
-    : window.matchMedia(desktopViewportQuery).matches
+  typeof window === 'undefined' ? true : window.matchMedia(desktopViewportQuery).matches
 )
 const hasEnteredViewport = ref(false)
 const pendingAutoLoad = ref(false)
@@ -894,15 +755,22 @@ let desktopViewportMediaQuery: MediaQueryList | null = null
 let desktopViewportListener: ((event: MediaQueryListEvent) => void) | null = null
 let visibilityObserver: IntersectionObserver | null = null
 
+// Gemini 第三方上游 API Key：没有 AI Studio 等级与本地模拟配额
+const isGeminiThirdPartyApiKey = computed(() => {
+  if (props.account.platform !== 'gemini' || props.account.type !== 'apikey') return false
+  const creds = props.account.credentials as GeminiCredentials | undefined
+  return !isOfficialGeminiBaseUrl(creds?.base_url)
+})
+
+const isGeminiVertex = computed(() => {
+  return props.account.platform === 'gemini' && props.account.type === 'service_account'
+})
+
 // Show usage windows for OAuth and Setup Token accounts
 const showUsageWindows = computed(() => {
   // Gemini: we can always compute local usage windows from DB logs (simulated quotas).
-  if (props.account.platform === 'gemini') return true
-  // Kiro 直连 AWS(OAuth 或 无 base_url 的 API Key)展示 credits;外部中转账号按通用 API Key 处理。
-  if (props.account.platform === 'kiro') {
-    return props.account.type === 'oauth' || isKiroDirectApiKeyAccount(props.account)
-  }
-  if (props.account.platform === 'adobe') return props.account.type === 'oauth'
+  // 第三方上游 API Key 没有模拟配额，按普通 Key 账号展示今日统计与额度进度条。
+  if (props.account.platform === 'gemini') return !isGeminiThirdPartyApiKey.value
   // 多协议 API Key 供应商：apikey 账号也有滚动用量窗口（coding plan / 订阅）或余额，
   // 由 CNProviderQuotaCell / CNProviderBalanceCell 自行探测与展示。
   if (isMultiProtocolApiKeyPlatform(props.account.platform)) {
@@ -915,12 +783,8 @@ const shouldFetchUsage = computed(() => {
   if (props.account.platform === 'anthropic') {
     return props.account.type === 'oauth' || props.account.type === 'setup-token'
   }
-  if (props.account.platform === 'kiro') {
-    // 仅 Kiro 直连 AWS 账号查 getUsageLimits;外部中转账号不查 Kiro 用量
-    return props.account.type === 'oauth' || isKiroDirectApiKeyAccount(props.account)
-  }
   if (props.account.platform === 'gemini') {
-    return true
+    return !isGeminiThirdPartyApiKey.value && !isGeminiVertex.value
   }
   if (props.account.platform === 'antigravity') {
     return props.account.type === 'oauth'
@@ -929,9 +793,6 @@ const shouldFetchUsage = computed(() => {
     return props.account.type === 'oauth'
   }
   if (props.account.platform === 'openai') {
-    return props.account.type === 'oauth'
-  }
-  if (props.account.platform === 'adobe') {
     return props.account.type === 'oauth'
   }
   return false
@@ -944,8 +805,9 @@ const cnBalanceCellVisible = computed(() => cnBalanceCellVisibleFn(props.account
 
 const isBatchManaged = computed(() => typeof props.requestBatchedUsage === 'function')
 
+// Vertex 没有本地模拟配额，用量窗口展示今日统计
 const showGeminiTodayStats = computed(() => {
-  return props.account.platform === 'gemini' && props.account.type === 'service_account'
+  return isGeminiVertex.value
 })
 
 const geminiUsageAvailable = computed(() => {
@@ -963,21 +825,6 @@ const hasOpenAIUsageFallback = computed(() => {
   if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return false
   return !!usageInfo.value?.five_hour || !!usageInfo.value?.seven_day
 })
-
-const codexTurnTickets = computed(() => props.account.codex_turn_tickets ?? [])
-
-function shortCodexTicketModel(model: string) {
-  if (model === 'gpt-6-astra') return 'astra'
-  if (model === 'gpt-5.6-sol') return 'sol'
-  return model
-}
-
-function formatCodexTicketRemaining(seconds: number) {
-  const total = Math.max(0, Math.floor(seconds || 0))
-  const m = Math.floor(total / 60)
-  const s = total % 60
-  return `${m}m${String(s).padStart(2, '0')}s`
-}
 
 const openAISevenDayEstimatedTotalCost = computed(() => {
   const sevenDay = usageInfo.value?.seven_day
@@ -1124,6 +971,10 @@ const geminiOAuthType = computed(() => {
   return (creds?.oauth_type || '').trim() || null
 })
 
+const showGeminiQuotaPolicy = computed(() => {
+  return !isGeminiVertex.value
+})
+
 // Gemini 是否为 Code Assist OAuth
 const isGeminiCodeAssist = computed(() => {
   if (props.account.platform !== 'gemini') return false
@@ -1131,9 +982,10 @@ const isGeminiCodeAssist = computed(() => {
   return creds?.oauth_type === 'code_assist' || (!creds?.oauth_type && !!creds?.project_id)
 })
 
-const geminiChannelShort = computed((): 'ai studio' | 'gcp' | 'google one' | 'client' | null => {
+const geminiChannelShort = computed((): 'ai studio' | 'vertex' | 'gcp' | 'google one' | 'client' | null => {
   if (props.account.platform !== 'gemini') return null
 
+  if (isGeminiVertex.value) return 'vertex'
   // API Key accounts are AI Studio.
   if (props.account.type === 'apikey') return 'ai studio'
 
@@ -1147,6 +999,7 @@ const geminiChannelShort = computed((): 'ai studio' | 'gcp' | 'google one' | 'cl
 
 const geminiUserLevel = computed((): string | null => {
   if (props.account.platform !== 'gemini') return null
+  if (isGeminiVertex.value) return null
 
   const tier = (geminiTier.value || '').toString().trim()
   const tierLower = tier.toLowerCase()
@@ -1204,7 +1057,7 @@ const geminiTierClass = computed(() => {
   const channel = geminiChannelShort.value
   const level = geminiUserLevel.value
 
-  if (channel === 'client' || channel === 'ai studio') {
+  if (channel === 'client' || channel === 'ai studio' || channel === 'vertex') {
     return 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300'
   }
 
@@ -1562,172 +1415,6 @@ const isAnthropicOAuthOrSetupToken = computed(() => {
   return props.account.platform === 'anthropic' && (props.account.type === 'oauth' || props.account.type === 'setup-token')
 })
 
-// Kiro 用量账号:仅直连 AWS(OAuth 或 无 base_url 的 API Key)才查/展示 Kiro credits。
-// 外部中转账号(apikey + base_url)转发到 Anthropic 兼容上游,无 Kiro 用量,按通用 API Key 处理。
-const isKiroUsageAccount = computed(() => {
-  return props.account.platform === 'kiro' &&
-    (props.account.type === 'oauth' || isKiroDirectApiKeyAccount(props.account))
-})
-
-const isAdobeUsageAccount = computed(() =>
-  props.account.platform === 'adobe' && props.account.type === 'oauth'
-)
-
-const defaultUsageSource = computed<'passive' | 'active' | undefined>(() => {
-  if (isAnthropicOAuthOrSetupToken.value || isKiroUsageAccount.value || isAdobeUsageAccount.value) {
-    return 'passive'
-  }
-  return undefined
-})
-
-const manualRefreshUsageSource = computed<'passive' | 'active' | undefined>(() => {
-  if (isKiroUsageAccount.value || isAdobeUsageAccount.value) {
-    return 'active'
-  }
-  return defaultUsageSource.value
-})
-
-const kiroUsageAvailable = computed(() => {
-  return !!(
-    usageInfo.value?.kiro_credit ||
-    usageInfo.value?.kiro_bonus ||
-    usageInfo.value?.kiro_reset_at
-  )
-})
-
-const syncKiroUsageMeta = (info?: AccountUsageInfo | null) => {
-  if (!isKiroUsageAccount.value) return
-
-  const planType = (
-    info?.kiro_subscription_name ||
-    info?.kiro_subscription_type ||
-    ''
-  ).trim()
-
-  emit('kiroUsageMeta', {
-    ...(planType ? { plan_type: planType } : {})
-  })
-}
-
-const clampPercent = (value?: number | null) => {
-  if (value == null || !Number.isFinite(value)) return 0
-  return Math.max(0, Math.min(100, value))
-}
-
-const kiroCreditPercent = computed(() => clampPercent(usageInfo.value?.kiro_credit?.percentage_used))
-const kiroBonusPercent = computed(() => clampPercent(usageInfo.value?.kiro_bonus?.percentage_used))
-
-// Adobe（Step 6）：与 Kiro 分开语义——Adobe 是每日重置，Kiro 是订阅到期，不能复用。
-const adobeCreditPercent = computed(() => clampPercent(usageInfo.value?.adobe_credit?.percentage_used))
-const adobeUsageAvailable = computed(() =>
-  !!(usageInfo.value?.adobe_credit || usageInfo.value?.adobe_plan_cap)
-)
-const adobeResetDisplay = computed(() => {
-  const raw = usageInfo.value?.adobe_credit_reset_at
-  if (!raw) return ''
-  const parsed = new Date(raw)
-  if (Number.isNaN(parsed.getTime())) return ''
-  return parsed.toLocaleString()
-})
-
-const formatKiroAmount = (value?: number | null) => {
-  if (value == null || !Number.isFinite(value)) return '0'
-  if (Math.abs(value) >= 1000 || Number.isInteger(value)) {
-    return formatCompactNumber(value, { allowBillions: false })
-  }
-  return value.toFixed(2).replace(/\.?0+$/, '')
-}
-
-const kiroResetDisplay = computed(() => {
-  const raw = usageInfo.value?.kiro_reset_at
-  if (!raw) return ''
-  const parsed = new Date(raw)
-  if (Number.isNaN(parsed.getTime())) return ''
-  return parsed.toLocaleDateString()
-})
-
-const kiroBonusMeta = computed(() => {
-  const bonus = usageInfo.value?.kiro_bonus
-  if (!bonus) return ''
-  if ((bonus.days_remaining ?? 0) > 0) {
-    return t('admin.accounts.usageWindow.kiroDaysLeft', { days: bonus.days_remaining })
-  }
-  if (bonus.expiry_date) {
-    const parsed = new Date(bonus.expiry_date)
-    if (!Number.isNaN(parsed.getTime())) {
-      return `${t('admin.accounts.usageWindow.kiroExpires')} ${parsed.toLocaleDateString()}`
-    }
-  }
-  return ''
-})
-
-const kiroRuntimeResetDisplay = computed(() => {
-  const raw = usageInfo.value?.kiro_runtime_reset_at
-  if (!raw) return ''
-  const parsed = new Date(raw)
-  if (Number.isNaN(parsed.getTime())) return ''
-  return parsed.toLocaleString()
-})
-
-const kiroQuotaResetDisplay = computed(() => {
-  const raw = usageInfo.value?.kiro_quota_reset_at
-  if (!raw) return ''
-  const parsed = new Date(raw)
-  if (Number.isNaN(parsed.getTime())) return ''
-  return parsed.toLocaleString()
-})
-
-const isKiroProfileError = computed(() => {
-  if (!isKiroUsageAccount.value) return false
-  const err = (usageInfo.value?.error || '').toLowerCase()
-  return err.includes('profilearn is required') ||
-    (err.includes('profile arn') && err.includes('required')) ||
-    err.includes('profilearn') ||
-    err.includes('listavailableprofiles')
-})
-
-const isKiroUsageForbidden = computed(() => {
-  if (!isKiroUsageAccount.value) return false
-  return usageInfo.value?.error_code === 'forbidden' && !usageInfo.value?.needs_reauth && !isKiroProfileError.value
-})
-
-const kiroQuotaState = computed(() => usageInfo.value?.kiro_quota_state || '')
-
-const kiroStatusBadgeLabel = computed(() => {
-  const runtimeState = usageInfo.value?.kiro_runtime_state
-  if (runtimeState === 'suspended') return t('admin.accounts.forbidden')
-  if (runtimeState === 'cooldown') return t('admin.accounts.status.rateLimited')
-  if (usageInfo.value?.needs_reauth) return t('admin.accounts.needsReauth')
-  if (isKiroProfileError.value) return t('admin.accounts.usageError')
-  if (isKiroUsageForbidden.value) return t('admin.accounts.forbidden')
-  if (kiroQuotaState.value === 'credits_exhausted') return t('admin.accounts.status.creditsExhausted')
-  return ''
-})
-
-const kiroStatusToneClass = computed(() => {
-  const runtimeState = usageInfo.value?.kiro_runtime_state
-  if (runtimeState === 'suspended') return 'text-red-700 dark:text-red-300'
-  if (runtimeState === 'cooldown') return 'text-amber-700 dark:text-amber-300'
-  if (usageInfo.value?.needs_reauth) return 'text-orange-700 dark:text-orange-300'
-  if (isKiroProfileError.value) return 'text-yellow-700 dark:text-yellow-300'
-  if (isKiroUsageForbidden.value) return 'text-rose-700 dark:text-rose-300'
-  if (kiroQuotaState.value === 'credits_exhausted') {
-    return 'text-red-700 dark:text-red-300'
-  }
-  return 'text-gray-600 dark:text-gray-300'
-})
-
-const kiroStatusHint = computed(() => {
-  const runtimeState = usageInfo.value?.kiro_runtime_state
-  if (runtimeState === 'cooldown' && kiroRuntimeResetDisplay.value) {
-    return t('admin.accounts.status.rateLimitedUntil', { time: kiroRuntimeResetDisplay.value })
-  }
-  if (kiroQuotaState.value === 'credits_exhausted' && kiroQuotaResetDisplay.value) {
-    return t('admin.accounts.status.creditsExhaustedUntil', { time: kiroQuotaResetDisplay.value })
-  }
-  return ''
-})
-
 const requestParentBatchUsage = (options?: { force?: boolean }) => {
   if (!isBatchManaged.value || !shouldFetchUsage.value) return
   props.requestBatchedUsage?.(props.account, options)
@@ -1752,7 +1439,6 @@ const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?
     const cached = _usageCache.get(props.account.id)
     if (cached && Date.now() - cached.ts < USAGE_CACHE_TTL) {
       usageInfo.value = cached.data
-      syncKiroUsageMeta(cached.data)
       loading.value = false
       return
     }
@@ -1762,13 +1448,12 @@ const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?
   error.value = null
 
   try {
-    const fetchFn = () => options?.source
-      ? adminAPI.accounts.getUsage(props.account.id, options.source, options.bypassCache === true)
-      : adminAPI.accounts.getUsage(props.account.id)
+		const fetchFn = () => options?.source
+			? adminAPI.accounts.getUsage(props.account.id, options.source, options.bypassCache === true)
+			: adminAPI.accounts.getUsage(props.account.id)
     const result = await enqueueUsageRequest(props.account, fetchFn)
     if (!unmounted.value) {
       usageInfo.value = result
-      syncKiroUsageMeta(result)
       _usageCache.set(props.account.id, { data: result, ts: Date.now() })
     }
   } catch (e: any) {
@@ -1834,10 +1519,7 @@ const attachVisibilityObserver = () => {
 const loadActiveUsage = async () => {
   activeQueryLoading.value = true
   try {
-    const result = await adminAPI.accounts.getUsage(props.account.id, 'active', true)
-    usageInfo.value = result
-    syncKiroUsageMeta(result)
-    _usageCache.set(props.account.id, { data: result, ts: Date.now() })
+    usageInfo.value = await adminAPI.accounts.getUsage(props.account.id, 'active', true)
   } catch (e: any) {
     console.error('Failed to load active usage:', e)
   } finally {
@@ -1951,7 +1633,7 @@ const formatKeyUserCost = computed(() => {
 })
 
 onMounted(() => {
-  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+  if (typeof window !== 'undefined') {
     desktopViewportMediaQuery = window.matchMedia(desktopViewportQuery)
     isDesktopViewport.value = desktopViewportMediaQuery.matches
     desktopViewportListener = (event: MediaQueryListEvent) => {
@@ -1971,7 +1653,8 @@ onMounted(() => {
   }
 
   if (!shouldAutoLoadUsageOnMount.value) return
-  requestAutoLoad(defaultUsageSource.value)
+  const source = isAnthropicOAuthOrSetupToken.value ? 'passive' : undefined
+  requestAutoLoad(source)
 })
 
 watch(
@@ -2016,9 +1699,7 @@ watch(openAIUsageRefreshKey, (nextKey, prevKey) => {
   }
 
   _usageCache.delete(props.account.id)
-  loadUsage({ bypassCache: true }).catch((e) => {
-    console.error('Failed to reload OpenAI usage after row refresh:', e)
-  })
+  requestAutoLoad()
 })
 
 watch(
@@ -2032,8 +1713,9 @@ watch(
       return
     }
 
+    const source = isAnthropicOAuthOrSetupToken.value ? 'passive' : undefined
     _usageCache.delete(props.account.id)
-    loadUsage({ source: manualRefreshUsageSource.value, bypassCache: true }).catch((e) => {
+    loadUsage({ source, bypassCache: true }).catch((e) => {
       console.error('Failed to refresh usage after manual refresh:', e)
     })
   }
