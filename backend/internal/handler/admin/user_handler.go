@@ -746,7 +746,7 @@ func (h *UserHandler) UpdateUserPlatformQuotas(c *gin.Context) {
 		return
 	}
 
-	maxQuotaPlatforms := len(service.AllowedQuotaPlatforms)
+	maxQuotaPlatforms := len(service.AllowedQuotaPlatforms) + 1 // 包括跨平台 total 行
 	if len(req.Quotas) > maxQuotaPlatforms {
 		response.BadRequest(c, fmt.Sprintf("quotas length must be <= %d", maxQuotaPlatforms))
 		return
@@ -877,7 +877,8 @@ func (h *UserHandler) UpdateUserPlatformQuotas(c *gin.Context) {
 	// 增加一次 DB 查询和逻辑复杂度。由于 AllowedQuotaPlatforms 数量很少，
 	// 全量 invalidate 的额外开销可接受，且能可靠覆盖软删除场景。
 	if h.billingCache != nil {
-		for _, p := range service.AllowedQuotaPlatforms {
+		quotaPlatforms := append([]string{service.TotalQuotaPlatform}, service.AllowedQuotaPlatforms...)
+		for _, p := range quotaPlatforms {
 			if err := h.billingCache.DeleteUserPlatformQuotaCache(ctx, userID, p); err != nil {
 				slog.Error("ALERT: quota cache invalidation failed after UpsertForUser; limit 生效可能延迟至 sentinel TTL(最长 1h),需人工确认或重试失效", "user_id", userID, "platform", p, "err", err)
 			}

@@ -502,7 +502,10 @@ type fakeZeroQuotaCache struct {
 	called bool
 }
 
-func (f *fakeZeroQuotaCache) GetUserPlatformQuotaCache(_ context.Context, _ int64, _ string) (*UserPlatformQuotaCacheEntry, bool, error) {
+func (f *fakeZeroQuotaCache) GetUserPlatformQuotaCache(_ context.Context, _ int64, platform string) (*UserPlatformQuotaCacheEntry, bool, error) {
+	if platform == TotalQuotaPlatform {
+		return nil, false, nil
+	}
 	f.called = true
 	daily := 0.0
 	entry := &UserPlatformQuotaCacheEntry{

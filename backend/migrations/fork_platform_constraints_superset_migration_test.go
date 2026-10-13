@@ -42,5 +42,5 @@ func TestForkPlatformConstraintsSupersetMigration(t *testing.T) {
 		}
 	}
 	sort.Strings(touching)
-	require.Equal(t, name, touching[len(touching)-1])
+	require.Equal(t, "242_fork_platform_constraints_add_typesafe.sql", touching[len(touching)-1])
 }

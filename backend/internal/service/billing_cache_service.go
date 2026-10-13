@@ -775,6 +775,11 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 		}
 	}
 
+	// 总额度按人共享，订阅模式和未解析的平台也必须检查。
+	if err := s.checkUserTotalQuotaEligibility(ctx, user.ID); err != nil {
+		return err
+	}
+
 	// Check API Key rate limits (applies to both billing modes)
 	if apiKey != nil && apiKey.HasRateLimits() {
 		if err := s.checkAPIKeyRateLimits(ctx, apiKey); err != nil {

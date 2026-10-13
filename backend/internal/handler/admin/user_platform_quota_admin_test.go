@@ -124,8 +124,8 @@ func TestUpdateUserPlatformQuotas_Success(t *testing.T) {
 		}
 	}
 	// 缓存失效：按全部允许平台统一失效（含 kimi/zhipu/deepseek）。
-	if len(cache.deleteCalls) != len(service.AllowedQuotaPlatforms) {
-		t.Errorf("expected %d cache delete calls, got %d: %+v", len(service.AllowedQuotaPlatforms), len(cache.deleteCalls), cache.deleteCalls)
+	if len(cache.deleteCalls) != len(service.AllowedQuotaPlatforms)+1 {
+		t.Errorf("expected %d cache delete calls, got %d: %+v", len(service.AllowedQuotaPlatforms)+1, len(cache.deleteCalls), cache.deleteCalls)
 	}
 }
 

@@ -208,6 +208,10 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 		}
 	}
 
+	if p.User != nil {
+		recordUserTotalQuotaUsage(billingCtx, deps, p.User.ID, cost.ActualCost, true)
+	}
+
 	// NOTE: finalizePostUsageBilling is NOT called here to avoid double-queuing
 	// cache updates. The legacy path does DB writes directly; the finalize path
 	// does cache queue + notifications. Notifications are dispatched separately
@@ -455,6 +459,10 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 			}
 			// flusher_enabled=true:不直写 DB,flusher 异步批量刷
 		}
+	}
+
+	if p.User != nil {
+		recordUserTotalQuotaUsage(ctx, deps, p.User.ID, p.Cost.ActualCost, false)
 	}
 
 	// Notification checks run async — all parameters are already captured,

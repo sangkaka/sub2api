@@ -823,18 +823,6 @@ func decodeGeminiCachedContentPageToken(raw string) (int64, bool) {
 	return id, true
 }
 
-// mergeAccountIDSets 返回两个账号 ID 集合的并集（不修改入参）。
-func mergeAccountIDSets(a, b map[int64]struct{}) map[int64]struct{} {
-	out := make(map[int64]struct{}, len(a)+len(b))
-	for id := range a {
-		out[id] = struct{}{}
-	}
-	for id := range b {
-		out[id] = struct{}{}
-	}
-	return out
-}
-
 // handleGeminiCachedContentFailoverExhausted 处理绑定缓存的请求在持有账号上重试耗尽：没有其他账号可换。
 // 上游网关账号的限流 / 不可用响应反映持有缓存的上游账号状态，原样返回供客户端判断；
 // 其余（含官方账号）仍按普通 Gemini 路径处理：透传规则、通用映射。
