@@ -40,8 +40,6 @@ export interface PlatformQuotaLimits {
 /** 全平台默认限额 map（key = PlatformType） */
 export type DefaultPlatformQuotasMap = Partial<Record<PlatformType, PlatformQuotaLimits>>
 
-
-
 export type SchedulingThresholdPlatformType =
   | "openai"
   | "anthropic"

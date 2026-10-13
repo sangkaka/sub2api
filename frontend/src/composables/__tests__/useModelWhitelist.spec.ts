@@ -204,6 +204,8 @@ describe('useModelWhitelist', () => {
       'claude-opus-5-5-thinking',
       'claude-sonnet-5',
       'claude-sonnet-5-thinking',
+      'claude-sonnet-5-5',
+      'claude-sonnet-5-5-thinking',
       'claude-sonnet-4-6',
       'claude-sonnet-4-6-thinking',
       'claude-opus-4-5-20251101',
@@ -296,6 +298,8 @@ describe('useModelWhitelist', () => {
       { from: 'claude-opus-5-5-thinking', to: 'claude-opus-5.5' },
       { from: 'claude-sonnet-5', to: 'claude-sonnet-5' },
       { from: 'claude-sonnet-5-thinking', to: 'claude-sonnet-5' },
+      { from: 'claude-sonnet-5-5', to: 'claude-sonnet-5.5' },
+      { from: 'claude-sonnet-5-5-thinking', to: 'claude-sonnet-5.5' },
       { from: 'claude-sonnet-4-6', to: 'claude-sonnet-4.6' },
       { from: 'claude-sonnet-4-6-thinking', to: 'claude-sonnet-4.6' },
       { from: 'claude-opus-4-5-20251101', to: 'claude-opus-4.5' },
@@ -352,6 +356,8 @@ describe('useModelWhitelist', () => {
       { from: 'claude-opus-5-5-thinking', to: 'claude-opus-5.5' },
       { from: 'claude-sonnet-5', to: 'claude-sonnet-5' },
       { from: 'claude-sonnet-5-thinking', to: 'claude-sonnet-5' },
+      { from: 'claude-sonnet-5-5', to: 'claude-sonnet-5.5' },
+      { from: 'claude-sonnet-5-5-thinking', to: 'claude-sonnet-5.5' },
       { from: 'claude-sonnet-4-6', to: 'claude-sonnet-4.6' },
       { from: 'claude-sonnet-4-6-thinking', to: 'claude-sonnet-4.6' },
       { from: 'claude-opus-4-5-20251101', to: 'claude-opus-4.5' },
@@ -361,7 +367,7 @@ describe('useModelWhitelist', () => {
       { from: 'claude-haiku-4-5-20251001', to: 'claude-haiku-4.5' },
       { from: 'claude-haiku-4-5-20251001-thinking', to: 'claude-haiku-4.5' }
     ]))
-    expect(mappings).toHaveLength(24)
+    expect(mappings).toHaveLength(26)
     expect(mappings.every(item => !item.from.startsWith('kiro-'))).toBe(true)
     expect(mappings.every(item => !item.to.startsWith('kiro-'))).toBe(true)
     expect(mappings.every(item => !item.from.endsWith('-agentic'))).toBe(true)
@@ -371,6 +377,22 @@ describe('useModelWhitelist', () => {
     expect(mappings.some(item => item.from === 'gpt-5.6')).toBe(false)
     expect(mappings.some(item => item.to === 'gpt-5.6')).toBe(false)
     expect(mappings.some(item => item.to === 'claude-opus-4-7')).toBe(false)
+  })
+
+  it('kiro Sonnet 5.5 四种写法解析到同一上游 ID，直连白名单存恒等', () => {
+    for (const name of [
+      'claude-sonnet-5-5',
+      'claude-sonnet-5-5-thinking',
+      'claude-sonnet-5.5',
+      'claude-sonnet-5.5-thinking'
+    ]) {
+      expect(kiroUpstreamModelID(name)).toBe('claude-sonnet-5.5')
+    }
+
+    const mapping = buildModelMappingObject('whitelist', ['claude-sonnet-5-5'], [], {
+      kiroDirect: true
+    })
+    expect(mapping).toEqual({ 'claude-sonnet-5-5': 'claude-sonnet-5-5' })
   })
 
   // 逐条对齐 backend/internal/domain/constants.go 的 DefaultAdobeModelMapping

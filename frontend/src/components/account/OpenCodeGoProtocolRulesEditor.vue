@@ -23,10 +23,10 @@
           />
           <Select
             :model-value="row.protocol"
-            :options="protocolOptions"
+            :options="protocolOptions.map(option => ({ value: option.value, label: t(`admin.accounts.cnProviders.apiProtocol.${option.labelKey}`) }))"
             class="w-44 shrink-0"
             :data-testid="`opencode-go-protocol-select-${index}`"
-            @update:model-value="setPrimaryProtocol(row, String($event) as CnNativeApiProtocol)"
+            @update:model-value="setPrimaryProtocol(row, $event as CnNativeApiProtocol)"
           />
           <button
             type="button"
@@ -133,12 +133,7 @@ const protocolOptions = computed(() => {
     for (const protocol of row.extraProtocols ?? []) supported.add(protocol)
   }
   const options = PROTOCOL_ORDER.filter(option => supported.has(option.value))
-  const selected = options.length > 0 ? options : PROTOCOL_ORDER
-  return selected.map(option => ({
-    value: option.value,
-    label: t(`admin.accounts.cnProviders.apiProtocol.${option.labelKey}`),
-    labelKey: option.labelKey,
-  }))
+  return options.length > 0 ? options : PROTOCOL_ORDER
 })
 
 const hasModelCatalog = computed(() => providerHasModelCatalog(props.platform))

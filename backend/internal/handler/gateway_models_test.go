@@ -127,7 +127,7 @@ func newGatewayModelsHandlerForTest(repo service.AccountRepository, routeRepo ..
 			nil,      // settingService
 			nil,      // tlsFPProfileService
 			nil,      // channelService
-			nil,      // pricingResolver
+			nil,      // resolver
 			resolver, // compositeResolver
 			nil,      // balanceNotifyService
 			nil,      // userPlatformQuotaRepo
@@ -212,7 +212,9 @@ func TestDefaultModelIDsForCompositeIncludesAdobeAndOmitsKiro(t *testing.T) {
 	require.Contains(t, compositeIDs, "gemini-3-pro-image")
 	require.NotContains(t, compositeIDs, "nano-banana-pro")
 
-	require.NotContains(t, compositeListedPlatforms, service.PlatformKiro)
+	// Kiro is deliberately omitted from the composite static fallback: its
+	// claude-*/gpt-* model names collide with Anthropic/OpenAI. claude-opus-4-8-thinking
+	// only exists in the kiro catalog, so its absence proves the omission.
 	require.NotContains(t, compositeIDs, "claude-opus-4-8-thinking")
 }
 

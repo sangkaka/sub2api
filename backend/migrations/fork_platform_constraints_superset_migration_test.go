@@ -9,47 +9,38 @@ import (
 )
 
 func TestForkPlatformConstraintsSupersetMigration(t *testing.T) {
-	const name = "242_fork_platform_constraints_add_typesafe.sql"
+	const name = "239_fork_platform_constraints_superset.sql"
 	content, err := FS.ReadFile(name)
 	require.NoError(t, err)
 
 	sql := strings.Join(strings.Fields(string(content)), " ")
 	require.Contains(t, sql,
-		"CHECK (platform IN ('anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek', 'kiro', 'minimax', 'adobe', 'opencode_go', 'typesafe'))")
+		"CHECK (platform IN ('anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek', 'kiro', 'minimax', 'adobe', 'opencode_go'))")
 	require.Contains(t, sql,
-		"CHECK (target_platform IN ('anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek', 'kiro', 'minimax', 'adobe', 'opencode_go', 'typesafe'))")
+		"CHECK (target_platform IN ('anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek', 'kiro', 'minimax', 'adobe', 'opencode_go'))")
 	require.Contains(t, sql,
 		"ADD CONSTRAINT channel_monitors_provider_check CHECK (provider IN ('openai', 'anthropic', 'gemini', 'grok', 'antigravity', 'kiro', 'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go'))")
 	require.Contains(t, sql,
 		"ADD CONSTRAINT channel_monitor_request_templates_provider_check CHECK (provider IN ('openai', 'anthropic', 'gemini', 'grok', 'antigravity', 'kiro', 'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go'))")
 
-	// 242_drop 删除配额/组合路由的平台 CHECK 之后，本文件只应是 DROP 之前最后一个
-	// 重建这两处约束的迁移。渠道监控的 provider CHECK 仍由数据库约束，本文件目前
-	// 仍是它的终态；后续若有新迁移重建 channel_monitors_provider_check，必须继续
-	// 覆盖 kiro（不含 adobe，与 239 一致）。
+	// 必须是最后一个重建渠道监控 provider 约束的迁移，否则乱序补跑的旧迁移会在它之后再次收窄约束。
+	// user_platform_quotas / composite_model_routes 约束的终态由 241_add_typesafe_platform.sql
+	// 收敛（含 typesafe），其全集覆盖由 TestUserPlatformQuotaPlatformCheckFinalStateCoversAllPlatforms
+	// 与 TestCompositeRouteTargetPlatformFinalStateCoversAllPlatforms 校验；此处只盯 239 独有的
+	// channel_monitors 约束。
 	entries, err := FS.ReadDir(".")
 	require.NoError(t, err)
-	var quotaTouching []string
-	var monitorTouching []string
+	var touching []string
 	for _, e := range entries {
 		if !strings.HasSuffix(e.Name(), ".sql") {
 			continue
 		}
 		body, err := FS.ReadFile(e.Name())
 		require.NoError(t, err)
-		text := string(body)
-		if strings.Contains(text, "ADD CONSTRAINT user_platform_quotas_platform_check") ||
-			strings.Contains(text, "ADD CONSTRAINT composite_model_routes_target_platform_check") {
-			quotaTouching = append(quotaTouching, e.Name())
-		}
-		if strings.Contains(text, "ADD CONSTRAINT channel_monitors_provider_check") {
-			monitorTouching = append(monitorTouching, e.Name())
+		if strings.Contains(string(body), "ADD CONSTRAINT channel_monitors_provider_check") {
+			touching = append(touching, e.Name())
 		}
 	}
-	sort.Strings(quotaTouching)
-	sort.Strings(monitorTouching)
-	require.NotEmpty(t, quotaTouching)
-	require.Equal(t, name, quotaTouching[len(quotaTouching)-1])
-	require.NotEmpty(t, monitorTouching)
-	require.Equal(t, name, monitorTouching[len(monitorTouching)-1])
+	sort.Strings(touching)
+	require.Equal(t, name, touching[len(touching)-1])
 }

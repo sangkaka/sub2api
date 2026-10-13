@@ -43,8 +43,8 @@
     },
     {
       "id": "adobe",
-      "display_name": "Adobe Firefly",
-      "gateway": "adobe",
+      "display_name": "Adobe",
+      "gateway": "anthropic",
       "cn_provider": false
     },
     {

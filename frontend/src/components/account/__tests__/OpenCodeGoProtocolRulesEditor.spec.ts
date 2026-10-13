@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DOMWrapper, mount, type VueWrapper } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import OpenCodeGoProtocolRulesEditor from '../OpenCodeGoProtocolRulesEditor.vue'
 import type { OpenCodeGoProtocolRule } from '../credentialsBuilder'
 
@@ -16,23 +16,6 @@ function mountEditor(rows: OpenCodeGoProtocolRule[], platform = 'command_code', 
     props: { rows, platform, plan },
     global: { stubs: { Icon: true } }
   })
-}
-
-const protocolLabelKey: Record<string, string> = {
-  chat_completions: 'admin.accounts.cnProviders.apiProtocol.chatCompletions',
-  responses: 'admin.accounts.cnProviders.apiProtocol.responses',
-  anthropic: 'admin.accounts.cnProviders.apiProtocol.anthropic',
-}
-
-async function selectProtocol(wrapper: VueWrapper, index: number, value: string) {
-  const select = wrapper.get(`[data-testid="opencode-go-protocol-select-${index}"]`)
-  await select.get('[data-select-trigger]').trigger('click')
-  const label = protocolLabelKey[value]
-  const dropdown = document.body.querySelector(`[data-select-owner="opencode-go-protocol-select-${index}"]`)
-  if (!dropdown) throw new Error('protocol dropdown did not open')
-  const option = [...dropdown.querySelectorAll('[role="option"]')].find((node) => node.textContent?.includes(label))
-  if (!option) throw new Error(`protocol option ${value} not found`)
-  await new DOMWrapper(option).trigger('click')
 }
 
 describe('OpenCodeGoProtocolRulesEditor protocol sets', () => {
@@ -61,13 +44,16 @@ describe('OpenCodeGoProtocolRulesEditor protocol sets', () => {
     ]
     const wrapper = mountEditor(rows)
 
-    await selectProtocol(wrapper, 0, 'chat_completions')
+    // 组件为自定义 Select（原生 select 被替换），通过 update:modelValue 事件交互。
+    const selectAt = (index: number) =>
+      wrapper.getComponent(`[data-testid="opencode-go-protocol-select-${index}"]`)
+    await selectAt(0).vm.$emit('update:modelValue', 'chat_completions')
     expect(rows[0]).toEqual({ pattern: 'gpt-*', protocol: 'chat_completions', extraProtocols: ['responses'] })
 
-    await selectProtocol(wrapper, 0, 'anthropic')
+    await selectAt(0).vm.$emit('update:modelValue', 'anthropic')
     expect(rows[0]).toEqual({ pattern: 'gpt-*', protocol: 'anthropic', extraProtocols: ['responses'] })
 
-    await selectProtocol(wrapper, 1, 'responses')
+    await selectAt(1).vm.$emit('update:modelValue', 'responses')
     expect(rows[1]).toEqual({ pattern: 'grok-*', protocol: 'responses' })
   })
 

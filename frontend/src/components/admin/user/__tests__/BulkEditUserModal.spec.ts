@@ -76,12 +76,12 @@ describe('BulkEditUserModal', () => {
     [{ response: { data: { detail: 'Legacy detail' } } }, 'Legacy detail'],
     [{}, 'admin.users.bulkLimits.failed'],
   ])('shows API error details and allows retry after failure', async (error, expected) => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     batchUpdateLimits.mockRejectedValueOnce(error)
     const wrapper = mountModal()
     await wrapper.get('[data-test="enable-concurrency"]').trigger('click')
     await wrapper.get('[data-test="concurrency-input"]').setValue('5')
     await wrapper.get('form').trigger('submit')
+    await wrapper.get('[data-test="bulk-confirm-ok"]').trigger('click')
     await flushPromises()
 
     expect(showError).toHaveBeenCalledWith(expected)

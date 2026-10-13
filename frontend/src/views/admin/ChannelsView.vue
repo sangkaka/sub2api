@@ -431,7 +431,7 @@
                 <label class="input-label text-xs mb-0">{{ t('admin.channels.form.modelPricing', 'Model Pricing') }}</label>
                 <div class="flex items-center gap-2">
                   <button
-                    v-if="supportsPricingModelSync(section.platform)"
+                    v-if="supportsPricingModelSync(section.platform) || isKiroPlatform(section.platform)"
                     type="button"
                     @click="syncLatestModels(sIdx)"
                     :disabled="!!syncingPlatform"
@@ -874,14 +874,14 @@ function createTokenPricingEntry(models: string[], defaults: Partial<PricingForm
   return {
     models,
     billing_mode: 'token',
-    input_price: defaults.input_price ?? null,
+	input_price: defaults.input_price ?? null,
     output_price: defaults.output_price ?? null,
     cache_write_price: defaults.cache_write_price ?? null,
     cache_write_1h_price: defaults.cache_write_1h_price ?? null,
     cache_read_price: defaults.cache_read_price ?? null,
     fast_multiplier: defaults.fast_multiplier ?? null,
     flex_multiplier: defaults.flex_multiplier ?? null,
-    reasoning_effort_multipliers: defaults.reasoning_effort_multipliers ?? null,
+	reasoning_effort_multipliers: defaults.reasoning_effort_multipliers ?? null,
     image_input_price: defaults.image_input_price ?? null,
     image_output_price: defaults.image_output_price ?? null,
     per_request_price: null,
@@ -914,7 +914,9 @@ function pricingModelsActionLoadingLabel(platform: string): string {
 
 async function syncLatestModels(sectionIdx: number) {
   const section = form.platforms[sectionIdx]
-  if (!section || syncingPlatform.value || !supportsPricingModelSync(section.platform)) return
+  // kiro 无定价目录 provider，但走 fork 专属的“填充默认模型”入口。
+  if (!section || syncingPlatform.value) return
+  if (!supportsPricingModelSync(section.platform) && !isKiroPlatform(section.platform)) return
   const platform = section.platform
   syncingPlatform.value = platform
   try {
@@ -935,23 +937,7 @@ async function syncLatestModels(sectionIdx: number) {
       return
     }
     // Add new models as a single new pricing entry (user fills in prices)
-    section.model_pricing.push({
-      models: newModels,
-      billing_mode: 'token',
-      input_price: null,
-      output_price: null,
-      cache_write_price: null,
-      cache_write_1h_price: null,
-      cache_read_price: null,
-      fast_multiplier: null,
-      flex_multiplier: null,
-      reasoning_effort_multipliers: null,
-      image_input_price: null,
-      image_output_price: null,
-      per_request_price: null,
-      intervals: [],
-      time_pricing: createDefaultTimePricingForm()
-    })
+    form.platforms[sectionIdx].model_pricing.push(createTokenPricingEntry(newModels))
     appStore.showSuccess(t('admin.channels.form.syncModelsSuccess', { count: newModels.length }))
   } catch (error) {
     appStore.showError(extractApiErrorMessage(error, t('admin.channels.form.syncModelsError')))

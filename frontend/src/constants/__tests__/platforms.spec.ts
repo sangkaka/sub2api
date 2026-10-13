@@ -65,7 +65,7 @@ describe('platform catalog with a newly registered platform', () => {
       'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go', 'typesafe', 'command_code', 'cline'
     ])
     expect(CONCRETE_PLATFORM_OPTIONS.map((option) => option.label)).toEqual([
-      'Anthropic', 'OpenAI', 'Gemini', 'Antigravity', 'Kiro', 'Grok', 'Adobe Firefly',
+      'Anthropic', 'OpenAI', 'Gemini', 'Antigravity', 'Kiro', 'Grok', 'Adobe',
       'Kimi', 'Zhipu GLM', 'DeepSeek', 'MiniMax', 'OpenCode', 'TypeSafe / Jev', 'Command Code', 'Cline'
     ])
     expect(platformLabel('zhipu')).toBe('Zhipu GLM')

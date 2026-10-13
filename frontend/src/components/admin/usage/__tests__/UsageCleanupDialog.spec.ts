@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import UsageCleanupDialog from '../UsageCleanupDialog.vue'
 import Pagination from '@/components/common/Pagination.vue'
 
 const { listCleanupTasks, createCleanupTask, showError } = vi.hoisted(() => ({
@@ -56,15 +57,33 @@ vi.mock('@/api/admin', () => ({
   },
 }))
 
-import UsageCleanupDialog from '../UsageCleanupDialog.vue'
+enableAutoUnmount(afterEach)
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  listCleanupTasks.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 5 })
+  createCleanupTask.mockResolvedValue({})
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+const page = (number: number) => ({ items: [{ id: number, status: 'succeeded', deleted_rows: number, filters: {} }], total: 15, page: number, page_size: 5 })
+
+async function openDialog() {
+  listCleanupTasks.mockResolvedValueOnce(page(1))
+  const wrapper = mount(UsageCleanupDialog, {
+    props: { show: false, filters: {}, startDate: '2026-09-01', endDate: '2026-09-02' },
+    global: { stubs: { BaseDialog: { template: '<div><slot/><slot name="footer"/></div>' }, UsageFilters: true, ConfirmDialog: true, Pagination: true } },
+  })
+  await wrapper.setProps({ show: true })
+  await flushPromises()
+  return wrapper
+}
 
 describe('UsageCleanupDialog', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    listCleanupTasks.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 5 })
-    createCleanupTask.mockResolvedValue({})
-  })
-
   it('把外部模型选项传给清理筛选器', async () => {
     const wrapper = mount(UsageCleanupDialog, {
       props: {
@@ -140,21 +159,6 @@ describe('UsageCleanupDialog', () => {
     wrapper.unmount()
   })
 })
-
-enableAutoUnmount(afterEach)
-
-const page = (number: number) => ({ items: [{ id: number, status: 'succeeded', deleted_rows: number, filters: {} }], total: 15, page: number, page_size: 5 })
-
-async function openDialog() {
-  listCleanupTasks.mockResolvedValueOnce(page(1))
-  const wrapper = mount(UsageCleanupDialog, {
-    props: { show: false, filters: {}, startDate: '2026-09-01', endDate: '2026-09-02' },
-    global: { stubs: { BaseDialog: { template: '<div><slot/><slot name="footer"/></div>' }, UsageFilters: true, ConfirmDialog: true, Pagination: true } },
-  })
-  await wrapper.setProps({ show: true })
-  await flushPromises()
-  return wrapper
-}
 
 describe('cleanup task pagination', () => {
   it.each(['success', 'failure'])('ignores an older page request that completes with %s', async (outcome) => {
