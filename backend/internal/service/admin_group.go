@@ -413,6 +413,8 @@ func defaultModelsListCandidateIDs(platform string) []string {
 		return DefaultOpenCodeGoModelIDs()
 	case PlatformTypeSafe:
 		return []string{typesafe.JevLatestModel}
+	case PlatformLeonardo:
+		return LeonardoModelIDs()
 	case PlatformComposite:
 		return compositeDefaultModelsListCandidateIDs()
 	default:
@@ -428,10 +430,10 @@ func defaultAllowImageGenerationForPlatform(platform string) bool {
 	// Grok image and video generation routes share the legacy image-generation gate.
 	// Older clients send the false zero value, so Grok groups must default enabled.
 	//
-	// Adobe groups exist solely to serve image generation, so they must default
-	// enabled for the same reason: a false zero value from an older client would
-	// otherwise make every request fail the gate.
-	return platform == PlatformGrok || platform == PlatformAdobe
+	// Adobe and Leonardo groups exist solely to serve image generation, so they
+	// must default enabled for the same reason: a false zero value from an older
+	// client would otherwise make every request fail the gate.
+	return platform == PlatformGrok || platform == PlatformAdobe || platform == PlatformLeonardo
 }
 
 func compositeDefaultModelsListCandidateIDs() []string {

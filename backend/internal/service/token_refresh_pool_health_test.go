@@ -377,10 +377,11 @@ func TestTokenRefreshService_RegistrationsAreCandidateEligibilitySource(t *testi
 		PlatformKiro,
 		PlatformGrok,
 		PlatformAdobe,
+		PlatformLeonardo,
 	}, svc.eligiblePlatforms())
-	require.Len(t, svc.registrations, 7)
-	require.Equal(t, []string{PlatformAdobe}, cookieCredentialRefreshPlatforms(svc.eligiblePlatforms()),
-		"Adobe 没有 refresh_token，候选查询必须按 cookie 放行")
+	require.Len(t, svc.registrations, 8)
+	require.Equal(t, []string{PlatformAdobe, PlatformLeonardo}, cookieCredentialRefreshPlatforms(svc.eligiblePlatforms()),
+		"Adobe 与 Leonardo 没有 refresh_token，候选查询必须按 cookie 放行")
 	for _, registration := range svc.registrations {
 		require.NotNil(t, registration.refresher)
 		require.NotNil(t, registration.executor)

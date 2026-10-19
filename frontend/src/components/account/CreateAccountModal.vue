@@ -258,7 +258,7 @@
             <PlatformIcon :platform="spec.id" size="sm" />
             {{ spec.display_name }}
           </button>
-          <!-- fork 定制：Kiro / Adobe 专属入口，固定最后一行最后两格 -->
+          <!-- fork 定制：Kiro / Adobe / Leonardo 专属入口，固定最后一行 -->
           <button
             type="button"
             @click="form.platform = 'kiro'"
@@ -304,6 +304,20 @@
           >
             <PlatformIcon platform="adobe" size="sm" />
             Adobe
+          </button>
+          <button
+            type="button"
+            @click="form.platform = 'leonardo'"
+            :class="[
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
+              form.platform === 'leonardo'
+                ? 'bg-white text-violet-600 shadow-sm dark:bg-dark-600 dark:text-violet-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+            data-testid="platform-tab-leonardo"
+          >
+            <PlatformIcon platform="leonardo" size="sm" />
+            Leonardo
           </button>
         </div>
       </div>
@@ -1317,6 +1331,134 @@
           </button>
         </div>
       </div>
+      <!-- Leonardo: Cookie 原生直连 vs OpenAI 形中转兜底。 -->
+      <div v-if="form.platform === 'leonardo'">
+        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
+        <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <button
+            type="button"
+            @click="accountCategory = 'oauth-based'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'oauth-based'
+                ? 'border-violet-500 bg-violet-50 dark:bg-violet-900/20'
+                : 'border-gray-200 hover:border-violet-300 dark:border-dark-600 dark:hover:border-violet-700'
+            ]"
+            data-testid="leonardo-account-type-oauth"
+          >
+            <div :class="['flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', accountCategory === 'oauth-based' ? 'bg-violet-500 text-white' : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400']">
+              <Icon name="key" size="sm" />
+            </div>
+            <div class="min-w-0">
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">
+                {{ t('admin.accounts.types.oauth') }}
+              </span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.accounts.types.leonardoOauth') }}
+              </span>
+            </div>
+          </button>
+          <button
+            type="button"
+            @click="accountCategory = 'apikey-relay'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              accountCategory === 'apikey-relay'
+                ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/20'
+                : 'border-gray-200 hover:border-sky-300 dark:border-dark-600 dark:hover:border-sky-700'
+            ]"
+            data-testid="leonardo-account-type-relay"
+          >
+            <div :class="['flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', accountCategory === 'apikey-relay' ? 'bg-sky-500 text-white' : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400']">
+              <Icon name="cloud" size="sm" />
+            </div>
+            <div class="min-w-0">
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">
+                API Key + Base URL
+              </span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.accounts.types.leonardoApikeyRelay') }}
+              </span>
+            </div>
+          </button>
+        </div>
+      </div>
+      <!-- Leonardo Cookie 账号的每积分单价：仅用于今日统计估算积分消耗金额，不参与计费 -->
+      <div v-if="form.platform === 'leonardo' && accountCategory === 'oauth-based'" class="space-y-2">
+        <label class="input-label">{{ t('admin.accounts.leonardoCreditUnitPriceUsd') }}</label>
+        <input
+          v-model.number="leonardoCreditUnitPriceUsd"
+          type="number"
+          min="0"
+          step="0.0001"
+          class="input"
+          placeholder="0"
+          data-testid="leonardo-credit-unit-price-usd"
+        />
+        <p class="input-hint">{{ t('admin.accounts.leonardoCreditUnitPriceUsdHint') }}</p>
+      </div>
+      <!-- Leonardo Cookie 账号的出图上限：超过时按上限出图，再超分回请求尺寸，按交付尺寸计费 -->
+      <div v-if="form.platform === 'leonardo' && accountCategory === 'oauth-based'" class="space-y-3" data-testid="leonardo-image-limits">
+        <div>
+          <label class="input-label">{{ t('admin.accounts.leonardoMaxQuality') }}</label>
+          <Select v-model="leonardoImageLimits.maxQuality" :options="leonardoMaxQualityOptions" data-testid="leonardo-max-quality" />
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.leonardoMaxShortEdge') }}</label>
+            <input
+              v-model.number="leonardoImageLimits.maxShortEdge"
+              type="number"
+              min="0"
+              step="16"
+              class="input"
+              placeholder="0"
+              data-testid="leonardo-max-short-edge"
+            />
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.leonardoMaxUpscaleFactor') }}</label>
+            <input
+              v-model.number="leonardoImageLimits.maxUpscaleFactor"
+              type="number"
+              min="1"
+              max="4"
+              step="0.1"
+              class="input"
+              placeholder="2"
+              data-testid="leonardo-max-upscale-factor"
+            />
+          </div>
+        </div>
+        <p class="input-hint">{{ t('admin.accounts.leonardoImageLimitsHint') }}</p>
+      </div>
+      <!-- Leonardo 外部中转(API Key + Base URL)：转发到 OpenAI 兼容出图上游，作为原生账号全部故障时的兜底 -->
+      <div v-if="form.platform === 'leonardo' && accountCategory === 'apikey-relay'" class="space-y-4" data-testid="leonardo-relay-fields">
+        <div>
+          <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
+          <input
+            v-model="apiKeyBaseUrl"
+            type="text"
+            required
+            class="input"
+            placeholder="https://api.openai.com"
+            data-testid="leonardo-relay-base-url"
+          />
+          <p class="input-hint">{{ t('admin.accounts.leonardo.relayBaseUrlHint') }}</p>
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
+          <input
+            v-model="apiKeyValue"
+            type="password"
+            required
+            class="input font-mono"
+            placeholder="sk-..."
+            data-testid="leonardo-relay-api-key"
+          />
+          <p class="input-hint">{{ t('admin.accounts.leonardo.relayApiKeyHint') }}</p>
+        </div>
+      </div>
       <div v-if="form.platform === 'kiro' && accountCategory === 'oauth-based'">
         <label class="input-label">{{ t('admin.accounts.oauth.kiro.authModeTitle') }}</label>
         <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-4">
@@ -2118,8 +2260,8 @@
         </div>
       </div>
 
-      <!-- API Key input (only for apikey type, excluding Antigravity / Kiro / Adobe which have their own fields) -->
-      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity' && form.platform !== 'kiro' && form.platform !== 'adobe'" class="space-y-4">
+      <!-- API Key input (only for apikey type, excluding Antigravity / Kiro / Adobe / Leonardo which have their own fields) -->
+      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity' && form.platform !== 'kiro' && form.platform !== 'adobe' && form.platform !== 'leonardo'" class="space-y-4">
         <div v-if="!isMultiProtocolPlatform || apiProtocol !== 'adaptive'">
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
@@ -3024,10 +3166,10 @@
         </div>
       </div>
 
-      <!-- OpenAI / Grok / Adobe 模型限制（这些类型没有 apikey 容器，需要独立的区域） -->
-      <!-- 注意括号：isOAuthFlow 对 Adobe 显式返回 false（cookie 建号，没有授权重定向环节） -->
+      <!-- OpenAI / Grok / Adobe / Leonardo 模型限制（这些类型没有 apikey 容器，需要独立的区域） -->
+      <!-- 注意括号：isOAuthFlow 对 Adobe / Leonardo 显式返回 false（cookie 建号，没有授权重定向环节） -->
       <div
-        v-if="((form.platform === 'openai' || form.platform === 'grok') && isOAuthFlow) || form.platform === 'adobe'"
+        v-if="((form.platform === 'openai' || form.platform === 'grok') && isOAuthFlow) || form.platform === 'adobe' || form.platform === 'leonardo'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
         data-testid="oauth-model-restriction-section"
       >
@@ -3839,7 +3981,7 @@
         </div>
       </div>
 
-      <!-- OpenAI WS Mode 三态（off/ctx_pool/passthrough） -->
+      <!-- OpenAI WS Mode（off/ctx_pool/passthrough/http_bridge/ws_bridge） -->
       <div
         v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
         data-testid="create-openai-ws-mode"
@@ -4284,7 +4426,7 @@
 
     </form>
 
-    <!-- Step 2: OAuth Authorization / Adobe credentials -->
+    <!-- Step 2: OAuth Authorization / Adobe / Leonardo credentials -->
     <div v-else class="space-y-5">
       <!-- Adobe：长期凭据是 cookie，短期 access_token 由后台刷新器维护 -->
       <div v-if="form.platform === 'adobe'" class="space-y-4">
@@ -4320,6 +4462,20 @@
             data-testid="adobe-arp-input"
           ></textarea>
           <p class="input-hint">{{ t('admin.accounts.adobe.arpHint') }}</p>
+        </div>
+      </div>
+      <!-- Leonardo：长期凭据是 Better Auth cookie，JWT 由后台刷新器维护。 -->
+      <div v-else-if="form.platform === 'leonardo'" class="space-y-4">
+        <div>
+          <label class="input-label">{{ t('admin.accounts.leonardo.cookieLabel') }}</label>
+          <textarea
+            v-model="leonardoCookie"
+            rows="6"
+            class="input font-mono text-xs"
+            :placeholder="t('admin.accounts.leonardo.cookiePlaceholder')"
+            data-testid="leonardo-cookie-input"
+          ></textarea>
+          <p class="input-hint">{{ t('admin.accounts.leonardo.cookieHint') }}</p>
         </div>
       </div>
       <div v-else-if="isKiroImportMode" class="space-y-4 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-900/20">
@@ -4360,7 +4516,7 @@
         </div>
       </div>
       <OAuthAuthorizationFlow
-        v-else
+        v-else-if="form.platform !== 'adobe' && form.platform !== 'leonardo'"
         ref="oauthFlowRef"
         :add-method="form.platform === 'anthropic' ? addMethod : 'oauth'"
         :auth-url="currentAuthUrl"
@@ -4451,6 +4607,16 @@
           class="btn btn-primary"
           data-testid="adobe-create-account"
           @click="handleAdobeCreate"
+        >
+          {{ submitting ? t('admin.accounts.creating') : t('common.create') }}
+        </button>
+        <button
+          v-else-if="form.platform === 'leonardo'"
+          type="button"
+          :disabled="submitting"
+          class="btn btn-primary"
+          data-testid="leonardo-create-account"
+          @click="handleLeonardoCreate"
         >
           {{ submitting ? t('admin.accounts.creating') : t('common.create') }}
         </button>
@@ -4774,6 +4940,12 @@ import type {
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
+import {
+  LEONARDO_MAX_QUALITY_VALUES,
+  applyLeonardoImageLimitsToExtra,
+  defaultLeonardoImageLimits,
+  type LeonardoImageLimitsForm
+} from '@/utils/leonardoImageLimits'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
@@ -4832,6 +5004,7 @@ import {
   OPENAI_WS_MODE_OFF,
   OPENAI_WS_MODE_PASSTHROUGH,
   OPENAI_WS_MODE_HTTP_BRIDGE,
+  OPENAI_WS_MODE_WS_BRIDGE,
   isOpenAIWSModeEnabled,
   resolveOpenAIWSModeHintKey,
   type OpenAIWSMode
@@ -5439,6 +5612,14 @@ const kiroImportTokenPlaceholder = computed(() => {
     ? '{"accessToken":"...","refreshToken":"...","clientIdHash":"...","authMethod":"IdC","provider":"' + kiroImportProvider.value + '"}'
     : '{"accessToken":"...","refreshToken":"...","authMethod":"social","provider":"' + kiroImportProvider.value + '"}'
 })
+// Leonardo：长期凭据是浏览器 cookie；粘贴支持完整 k=v 串或裸 session token。
+const leonardoCookie = ref('')
+const leonardoCreditUnitPriceUsd = ref(0)
+const leonardoImageLimits = ref<LeonardoImageLimitsForm>(defaultLeonardoImageLimits())
+const leonardoMaxQualityOptions = computed(() => [
+  { value: '', label: t('admin.accounts.leonardoMaxQualityUnlimited') },
+  ...LEONARDO_MAX_QUALITY_VALUES.map((value) => ({ value, label: value }))
+])
 const kiroUpstreamIDs = ref<Record<string, string>>({})
 const mergeKiroUpstreamIDs = (ids: Record<string, string>) => {
   kiroUpstreamIDs.value = { ...kiroUpstreamIDs.value, ...ids }
@@ -5458,6 +5639,34 @@ const kiroCreateSyncCredentials = computed(() => {
   }
   return undefined
 })
+// Leonardo Cookie 建号：cookie 必填；空白名单 = 不下发 model_mapping，
+// 由后端回落到平台默认映射。
+const handleLeonardoCreate = async () => {
+  if (!form.name.trim()) {
+    appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+    return
+  }
+  const cookie = leonardoCookie.value.trim()
+  if (!cookie) {
+    appStore.showError(t('admin.accounts.leonardo.cookieRequired'))
+    return
+  }
+
+  const credentials: Record<string, unknown> = {
+    cookie
+  }
+  const modelMapping = buildModelMappingObject(
+    modelRestrictionMode.value,
+    allowedModels.value,
+    modelMappings.value
+  )
+  if (modelMapping) {
+    credentials.model_mapping = modelMapping
+  }
+
+  await createAccountAndFinish('leonardo', 'oauth' as AccountType, credentials)
+}
+
 const buildCreateKiroMapping = (direct: boolean) =>
   buildModelMappingObject(
     'combined',
@@ -5662,7 +5871,8 @@ const openAIWSModeOptions = computed(() => [
   { value: OPENAI_WS_MODE_OFF, label: t('admin.accounts.openai.wsModeOff') },
   { value: OPENAI_WS_MODE_CTX_POOL, label: t('admin.accounts.openai.wsModeCtxPool') },
   { value: OPENAI_WS_MODE_PASSTHROUGH, label: t('admin.accounts.openai.wsModePassthrough') },
-  { value: OPENAI_WS_MODE_HTTP_BRIDGE, label: t('admin.accounts.openai.wsModeHttpBridge') }
+  { value: OPENAI_WS_MODE_HTTP_BRIDGE, label: t('admin.accounts.openai.wsModeHttpBridge') },
+  { value: OPENAI_WS_MODE_WS_BRIDGE, label: t('admin.accounts.openai.wsModeWsBridge') }
 ])
 
 const openaiResponsesWebSocketV2Mode = computed({
@@ -5760,6 +5970,11 @@ const form = reactive({
 
 // Helper to check if current type needs OAuth flow
 const isOAuthFlow = computed(() => {
+  // Leonardo 的长期凭据是浏览器 cookie，没有授权重定向环节（两步建号由
+  // needsCredentialStep 单独处理）。
+  if (form.platform === 'leonardo') {
+    return false
+  }
   // Antigravity upstream 类型不需要 OAuth 流程
   if (form.platform === 'antigravity' && antigravityAccountType.value === 'upstream') {
     return false
@@ -5775,9 +5990,11 @@ const isOAuthFlow = computed(() => {
   return accountCategory.value === 'oauth-based'
 })
 
-// Adobe 与 OAuth 一样分两步：第一步基础信息，第二步再填凭据。
+// Adobe / Leonardo 与 OAuth 一样分两步：第一步基础信息，第二步再填凭据；
+// 中转（apikey-relay）单步直接建号。
 const needsCredentialStep = computed(() =>
-  isOAuthFlow.value || (form.platform === 'adobe' && accountCategory.value !== 'apikey-relay')
+  isOAuthFlow.value
+  || ((form.platform === 'adobe' || form.platform === 'leonardo') && accountCategory.value !== 'apikey-relay')
 )
 
 const isKiroImportMode = computed(() => form.platform === 'kiro' && kiroAccountType.value === 'import')
@@ -5824,6 +6041,8 @@ watch(
         .then(profiles => { tlsFingerprintProfiles.value = profiles.map(p => ({ id: p.id, name: p.name })) })
         .catch(() => { tlsFingerprintProfiles.value = [] })
       // Modal opened - fill related models
+      // Leonardo 留空白名单：不下发 model_mapping = 后端回落默认映射。
+      if (form.platform === 'leonardo') return
       allowedModels.value = [...getModelsByPlatform(form.platform)]
       // Antigravity: 默认使用映射模式并填充默认映射
       if (form.platform === 'antigravity') {
@@ -5863,9 +6082,9 @@ watch(
       form.type = category === 'oauth-based' ? 'oauth' : 'apikey'
       return
     }
-    // Adobe: Cookie 落库 oauth；中转落库 apikey。其它残留类别强制回 oauth，
+    // Adobe / Leonardo: Cookie 落库 oauth；中转落库 apikey。其它残留类别强制回 oauth，
     // 避免 Anthropic 页签的 API Key 把通用 Base URL 区块串出来。
-    if (form.platform === 'adobe') {
+    if (form.platform === 'adobe' || form.platform === 'leonardo') {
       form.type = category === 'apikey-relay' ? 'apikey' : 'oauth'
       return
     }
@@ -5909,7 +6128,9 @@ watch(
                 ? 'https://api.x.ai/v1'
                 : newPlatform === 'typesafe'
                   ? 'https://api.typesafe.ai'
-                  : 'https://api.anthropic.com'
+                  : newPlatform === 'leonardo'
+                    ? ''
+                    : 'https://api.anthropic.com'
     }
     // Clear model-related settings
     allowedModels.value = []
@@ -5961,6 +6182,15 @@ watch(
       modelRestrictionMode.value = 'mapping'
       form.concurrency = 1
       form.load_factor = null
+    }
+    // Leonardo 默认 Cookie 原生模式；模型限制用白名单模式且默认空白名单
+    //（不下发 model_mapping = 后端回落默认映射，历史别名都还在）。
+    if (newPlatform === 'leonardo') {
+      apiKeyValue.value = ''
+      if (accountCategory.value !== 'oauth-based' && accountCategory.value !== 'apikey-relay') {
+        accountCategory.value = 'oauth-based'
+      }
+      modelRestrictionMode.value = 'whitelist'
     }
     if (newPlatform !== 'gemini' && newPlatform !== 'anthropic' && accountCategory.value === 'service_account') {
       accountCategory.value = 'oauth-based'
@@ -6420,6 +6650,9 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 
 // Methods
 const resetForm = () => {
+  leonardoCookie.value = ''
+  leonardoCreditUnitPriceUsd.value = 0
+  leonardoImageLimits.value = defaultLeonardoImageLimits()
   step.value = 1
   form.name = ''
   form.notes = ''
@@ -6766,8 +6999,10 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
 }
 
 const handleSubmit = async () => {
-  // For OAuth-based type, handle OAuth flow (goes to step 2)
-  if (isOAuthFlow.value || (form.platform === 'adobe' && accountCategory.value !== 'apikey-relay')) {
+  // 两步建号（OAuth 授权，以及 Adobe / Leonardo Cookie 粘贴）：第一步只校验名称后进入第二步。
+  // 必须与模板里「下一步」按钮的 needsCredentialStep 同口径，否则 Cookie 号
+  // 会落到下面的通用 API Key 分支。
+  if (needsCredentialStep.value) {
     if (!isGrokSSOInputMethod.value && !form.name.trim()) {
       appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
       return
@@ -6779,6 +7014,38 @@ const handleSubmit = async () => {
       return
     }
     step.value = 2
+    return
+  }
+
+  // Leonardo 外部中转(API Key + Base URL)：存为 type=apikey，带 base_url → OpenAI 出图转发。
+  if (form.platform === 'leonardo' && accountCategory.value === 'apikey-relay') {
+    if (!form.name.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+      return
+    }
+    if (!apiKeyBaseUrl.value.trim()) {
+      appStore.showError(t('admin.accounts.upstream.pleaseEnterBaseUrl'))
+      return
+    }
+    if (!apiKeyValue.value.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
+      return
+    }
+
+    const credentials: Record<string, unknown> = {
+      api_key: apiKeyValue.value.trim(),
+      base_url: apiKeyBaseUrl.value.trim()
+    }
+    const modelMapping = buildModelMappingObject(
+      modelRestrictionMode.value,
+      allowedModels.value,
+      modelMappings.value
+    )
+    if (modelMapping) {
+      credentials.model_mapping = modelMapping
+    }
+
+    await createAccountAndFinish('leonardo', 'apikey', credentials)
     return
   }
 
@@ -7295,6 +7562,12 @@ const createAccountAndFinish = async (
     const unitPrice = Number(kiroCreditUnitPriceUsd.value ?? 0)
     kiroExtra.kiro_credit_unit_price_usd = Number.isFinite(unitPrice) ? unitPrice : 0
     finalExtra = kiroExtra
+  }
+  if (platform === 'leonardo' && type === 'oauth') {
+    const leonardoExtra: Record<string, unknown> = { ...(finalExtra || {}) }
+    const unitPrice = Number(leonardoCreditUnitPriceUsd.value ?? 0)
+    leonardoExtra.leonardo_credit_unit_price_usd = Number.isFinite(unitPrice) ? unitPrice : 0
+    finalExtra = applyLeonardoImageLimitsToExtra(leonardoExtra, leonardoImageLimits.value)
   }
   if (platform === 'grok') {
     if (!credentials.base_url) {

@@ -29,7 +29,7 @@ type OAuthRefreshPageOptions struct {
 	ActiveOnly          bool
 	IncludeSetupToken   bool
 	RequireRefreshToken bool
-	// CookieCredentialPlatforms 列出以浏览器 cookie 作为长期凭据的平台（如 Adobe）：
+	// CookieCredentialPlatforms 列出以浏览器 cookie 作为长期凭据的平台（Adobe、Leonardo）：
 	// RequireRefreshToken 为 true 时，这些平台的账号改为要求非空 cookie 而非 refresh_token。
 	CookieCredentialPlatforms []string
 	ExcludeRetryCooldown      bool

@@ -143,7 +143,6 @@ func TestKiroGetMappedModelKeepsStoredDottedUpstreamID(t *testing.T) {
 }
 
 func TestGatewayServiceCalculateTokenCost_KiroAutoUsesConservativeFallback(t *testing.T) {
-	t.Skip("legacy Kiro billing behavior is no longer part of the current billing API")
 	cfg := &config.Config{}
 	cfg.Default.RateMultiplier = 1.1
 
@@ -168,6 +167,7 @@ func TestGatewayServiceCalculateTokenCost_KiroAutoUsesConservativeFallback(t *te
 		nil,                         // claudeTokenProvider
 		nil,                         // kiroTokenProvider
 		nil,                         // adobeTokenProvider
+		nil,                         // leonardoTokenProvider
 		nil,                         // kiroCooldownStore
 		nil,                         // sessionLimitCache
 		nil,                         // rpmCache
@@ -190,20 +190,19 @@ func TestGatewayServiceCalculateTokenCost_KiroAutoUsesConservativeFallback(t *te
 		},
 	}
 
-	expected, err := svc.billingService.CalculateCost("claude-sonnet-4", UsageTokens{
+	expected, err := svc.billingService.CalculateCost(kiroConservativeFallbackBillingModel, UsageTokens{
 		InputTokens:  20,
 		OutputTokens: 10,
 	}, 1.1)
 	require.NoError(t, err)
 
-	cost := svc.calculateTokenCost(context.Background(), result, &APIKey{}, "auto", 1.1, time.Time{})
+	cost := svc.calculateTokenCost(context.Background(), result, &APIKey{}, "auto", 1.1, time.Time{}, &recordUsageOpts{IsKiroAccount: true})
 	require.NotNil(t, cost)
 	require.InDelta(t, expected.ActualCost, cost.ActualCost, 1e-12)
 	require.InDelta(t, expected.TotalCost, cost.TotalCost, 1e-12)
 }
 
 func TestGatewayServiceCalculateTokenCost_KiroQwenUsesSonnetCreditRatio(t *testing.T) {
-	t.Skip("legacy Kiro billing behavior is no longer part of the current billing API")
 	svc := newKiroBillingGatewayForTest(t)
 	svc.billingService = NewBillingService(&config.Config{}, loadModelPricingCatalog(t))
 	tokens := UsageTokens{
@@ -228,7 +227,7 @@ func TestGatewayServiceCalculateTokenCost_KiroQwenUsesSonnetCreditRatio(t *testi
 		},
 	}
 
-	cost := svc.calculateTokenCost(context.Background(), result, &APIKey{}, "qwen3-coder-next", 1.1, time.Time{})
+	cost := svc.calculateTokenCost(context.Background(), result, &APIKey{}, "qwen3-coder-next", 1.1, time.Time{}, &recordUsageOpts{IsKiroAccount: true})
 	require.NotNil(t, cost)
 	require.InDelta(t, float64(tokens.InputTokens)*3e-6*ratio, cost.InputCost, 1e-12)
 	require.InDelta(t, float64(tokens.OutputTokens)*15e-6*ratio, cost.OutputCost, 1e-12)
@@ -258,7 +257,7 @@ func TestGatewayServiceCalculateTokenCost_KiroQwenGroupPricingWins(t *testing.T)
 		Usage: ClaudeUsage{InputTokens: 10, OutputTokens: 4},
 	}
 
-	cost := svc.calculateTokenCost(context.Background(), result, &APIKey{Group: group}, "qwen3-coder-next", 1.1, time.Time{})
+	cost := svc.calculateTokenCost(context.Background(), result, &APIKey{Group: group}, "qwen3-coder-next", 1.1, time.Time{}, &recordUsageOpts{IsKiroAccount: true})
 	require.NotNil(t, cost)
 	require.InDelta(t, 10*inputPrice, cost.InputCost, 1e-12)
 	require.InDelta(t, 4*outputPrice, cost.OutputCost, 1e-12)
@@ -287,7 +286,7 @@ func TestGatewayServiceCalculateTokenCost_KiroQwenChannelPricingWins(t *testing.
 		Usage: ClaudeUsage{InputTokens: 10, OutputTokens: 4},
 	}
 
-	cost := svc.calculateTokenCost(context.Background(), result, &APIKey{Group: group}, "qwen3-coder-next", 1.1, time.Time{})
+	cost := svc.calculateTokenCost(context.Background(), result, &APIKey{Group: group}, "qwen3-coder-next", 1.1, time.Time{}, &recordUsageOpts{IsKiroAccount: true})
 	require.NotNil(t, cost)
 	require.InDelta(t, 10*inputPrice, cost.InputCost, 1e-12)
 	require.InDelta(t, 4*outputPrice, cost.OutputCost, 1e-12)
@@ -341,6 +340,5 @@ func newKiroBillingGatewayForTest(t *testing.T) *GatewayService {
 		cfg,
 		nil, nil,
 		NewBillingService(cfg, nil),
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-	)
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }

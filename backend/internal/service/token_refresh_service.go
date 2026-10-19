@@ -132,9 +132,10 @@ func NewTokenRefreshService(
 		grokOAuthService = grokOAuthServices[0]
 	}
 	grokRefresher := NewGrokTokenRefresher(grokOAuthService)
-	// Adobe 没有 refresh_token：长期凭据是账号里的浏览器 cookie，刷新器不依赖任何
+	// Adobe / Leonardo 没有 refresh_token：长期凭据是账号里的浏览器 cookie，刷新器不依赖任何
 	// OAuth service，故直接构造。
 	adobeRefresher := NewAdobeTokenRefresher()
+	leonardoRefresher := NewLeonardoTokenRefresher()
 
 	// Each provider is registered exactly once. The same registry supplies both
 	// execution and repository eligibility, preventing future platform drift.
@@ -146,6 +147,7 @@ func NewTokenRefreshService(
 		{platform: PlatformKiro, refresher: kiroRefresher, executor: kiroRefresher},
 		{platform: PlatformGrok, refresher: grokRefresher, executor: grokRefresher},
 		{platform: PlatformAdobe, refresher: adobeRefresher, executor: adobeRefresher},
+		{platform: PlatformLeonardo, refresher: leonardoRefresher, executor: leonardoRefresher},
 	}
 
 	return s
@@ -156,7 +158,7 @@ func NewTokenRefreshService(
 func cookieCredentialRefreshPlatforms(platforms []string) []string {
 	var out []string
 	for _, platform := range platforms {
-		if platform == PlatformAdobe {
+		if platform == PlatformAdobe || platform == PlatformLeonardo {
 			out = append(out, platform)
 		}
 	}
@@ -1009,9 +1011,10 @@ func (s *TokenRefreshService) refreshWithRetryWithRateGate(
 		if isNonRetryableRefreshError(err) {
 			errorMsg := "Token refresh failed (non-retryable): " + logredact.RedactText(err.Error())
 			isGrokOAuth := account.IsGrokOAuth()
-			// Grok / Adobe 走条件置错，可能因凭据已变而跳过，通知推迟到确认落库之后。
+			// Grok / Adobe / Leonardo 走条件置错，可能因凭据已变而跳过，通知推迟到确认落库之后。
 			isAdobe := account.Platform == PlatformAdobe
-			if !isGrokOAuth && !isAdobe {
+			isLeonardo := account.Platform == PlatformLeonardo
+			if !isGrokOAuth && !isAdobe && !isLeonardo {
 				s.notifyAccountSchedulingBlocked(account, time.Time{}, "token_refresh_non_retryable")
 			}
 			s.clearAntigravityForceTokenRefresh(ctx, account, "non_retryable")
@@ -1043,6 +1046,13 @@ func (s *TokenRefreshService) refreshWithRetryWithRateGate(
 					slog.Info("token_refresh.adobe_error_status_skipped_cookie_changed", "account_id", account.ID)
 					return errRefreshSkipped
 				}
+			} else if isLeonardo {
+				// cookie 在 get-session 往返期间被管理员替换时，旧 cookie 的失效结论不能隔离新 cookie。
+				persistentlyBlocked, setErr = setLeonardoCookieRefreshError(ctx, s.accountRepo, account, errorMsg)
+				if setErr == nil && !persistentlyBlocked {
+					slog.Info("token_refresh.leonardo_error_status_skipped_cookie_changed", "account_id", account.ID)
+					return errRefreshSkipped
+				}
 			} else {
 				setErr = s.accountRepo.SetError(ctx, account.ID, errorMsg)
 				persistentlyBlocked = setErr == nil
@@ -1057,7 +1067,7 @@ func (s *TokenRefreshService) refreshWithRetryWithRateGate(
 						err: fmt.Errorf("failed to conditionally persist Grok OAuth refresh failure: %w", setErr),
 					}
 				}
-			} else if (isGrokOAuth || isAdobe) && persistentlyBlocked {
+			} else if (isGrokOAuth || isAdobe || isLeonardo) && persistentlyBlocked {
 				s.notifyAccountSchedulingBlocked(account, time.Time{}, "token_refresh_non_retryable")
 			}
 			cacheInvalidationFailed := false

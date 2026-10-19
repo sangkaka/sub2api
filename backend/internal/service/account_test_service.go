@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/anthropictokenizer"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	kiropkg "github.com/Wei-Shaw/sub2api/internal/pkg/kiro"
@@ -161,6 +162,10 @@ type AccountTestService struct {
 	grokWSDialer openAIWSClientDialer
 	// adobeTokenProvider 为 nil 时 Adobe 测试路径按需构造本地 provider。
 	adobeTokenProvider *AdobeTokenProvider
+	// leonardoTokenProvider 为 nil 时 Leonardo 测试路径按需构造本地 provider。
+	leonardoTokenProvider *LeonardoTokenProvider
+	// leonardoImageService 为 nil 时用测试专用的出图服务实例（单测注入用）。
+	leonardoImageService *LeonardoImageService
 }
 
 func (s *AccountTestService) SetSettingService(settingService *SettingService) {
@@ -179,6 +184,13 @@ func (s *AccountTestService) SetPluginManager(pluginManager *PluginManager) {
 func (s *AccountTestService) SetAdobeTokenProvider(provider *AdobeTokenProvider) {
 	if s != nil {
 		s.adobeTokenProvider = provider
+	}
+}
+
+// SetLeonardoTokenProvider 注入与网关共享 OAuthRefreshAPI 的 Leonardo token provider。
+func (s *AccountTestService) SetLeonardoTokenProvider(provider *LeonardoTokenProvider) {
+	if s != nil {
+		s.leonardoTokenProvider = provider
 	}
 }
 
@@ -435,6 +447,9 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	// 改前它会落到 testClaudeAccountConnection，拿 IMS token 去打 api.anthropic.com。
 	if account.Platform == PlatformAdobe {
 		return s.testAdobeAccountConnection(c, account, modelID, prompt)
+	}
+	if account.Platform == PlatformLeonardo {
+		return s.testLeonardoAccountConnection(c, account, modelID, prompt)
 	}
 
 	// 按模型分流的多模型聚合平台（OpenCode、Command Code 等）。
@@ -777,7 +792,8 @@ func (s *AccountTestService) testKiroAccountConnection(c *gin.Context, account *
 	pr, pw := io.Pipe()
 	go func() {
 		defer func() { _ = resp.Body.Close() }()
-		_, streamErr := kiropkg.StreamEventStreamAsAnthropicWithContext(ctx, resp.Body, pw, testModelID, estimateKiroInputTokens(ctx, payloadBytes), kiropkg.KiroRequestContext{})
+		// 账号连通性测试不属计量路径，固定官方精确口径。
+		_, streamErr := kiropkg.StreamEventStreamAsAnthropicWithContext(ctx, resp.Body, pw, testModelID, estimateKiroInputTokens(ctx, anthropictokenizer.AlgorithmOfficial, payloadBytes), kiropkg.KiroRequestContext{})
 		if streamErr != nil {
 			_ = pw.CloseWithError(streamErr)
 			return

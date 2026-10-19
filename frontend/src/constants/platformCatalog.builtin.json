@@ -290,6 +290,12 @@
           }
         ]
       }
+    },
+    {
+      "id": "leonardo",
+      "display_name": "Leonardo",
+      "gateway": "anthropic",
+      "cn_provider": false
     }
   ],
   "composite_precedence": [
@@ -307,6 +313,7 @@
     "opencode_go",
     "typesafe",
     "command_code",
-    "cline"
+    "cline",
+    "leonardo"
   ]
 }

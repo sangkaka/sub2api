@@ -152,12 +152,12 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			)
 		case OpenAIWSIngressModeHTTPBridge:
 			forceHTTPBridge = true
-		case OpenAIWSIngressModeCtxPool, OpenAIWSIngressModeShared, OpenAIWSIngressModeDedicated:
-			// continue
+		case OpenAIWSIngressModeCtxPool, OpenAIWSIngressModeWSBridge, OpenAIWSIngressModeShared, OpenAIWSIngressModeDedicated:
+			// ws_bridge 对 WS 入站与 ctx_pool 完全一致，区别只在 HTTP 入站。
 		default:
 			return NewOpenAIWSClientCloseError(
 				coderws.StatusPolicyViolation,
-				"websocket mode only supports ctx_pool/passthrough/http_bridge",
+				"websocket mode only supports ctx_pool/passthrough/http_bridge/ws_bridge",
 				nil,
 			)
 		}

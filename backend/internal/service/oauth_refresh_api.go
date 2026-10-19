@@ -350,21 +350,40 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 			// while the provider call was in flight. Return the durable row so
 			// post-refresh cache publication cannot restore that stale snapshot.
 			freshAccount = durableAccount
-		} else if freshAccount.Platform == PlatformAdobe {
-			// Adobe 的长期凭据是管理员粘贴的 cookie：整体覆盖会把 IMS 往返期间的
-			// cookie / model_mapping 修改写回旧值，故只合并 token 字段，且要求 cookie 未变。
-			conditionalRepo, ok := api.accountRepo.(AdobeTokenCredentialsRepository)
-			if !ok {
-				return nil, &providerConfigurationRefreshError{
-					err: fmt.Errorf("adobe token refresh conditional repository is not configured"),
+		} else if freshAccount.Platform == PlatformAdobe || freshAccount.Platform == PlatformLeonardo {
+			// Adobe / Leonardo 的长期凭据是管理员粘贴的 cookie：整体覆盖会把
+			// token 交换往返期间的 cookie / model_mapping 修改写回旧值，故只合并
+			// 交换产物字段，且要求 cookie 未变。
+			var applied bool
+			var updateErr error
+			switch freshAccount.Platform {
+			case PlatformAdobe:
+				conditionalRepo, ok := api.accountRepo.(AdobeTokenCredentialsRepository)
+				if !ok {
+					return nil, &providerConfigurationRefreshError{
+						err: fmt.Errorf("adobe token refresh conditional repository is not configured"),
+					}
 				}
+				applied, updateErr = conditionalRepo.UpdateAdobeTokenIfCookieUnchanged(
+					ctx,
+					freshAccount.ID,
+					attemptedAccount.GetCredential("cookie"),
+					adobeTokenCredentialFields(newCredentials),
+				)
+			case PlatformLeonardo:
+				conditionalRepo, ok := api.accountRepo.(LeonardoTokenCredentialsRepository)
+				if !ok {
+					return nil, &providerConfigurationRefreshError{
+						err: fmt.Errorf("leonardo token refresh conditional repository is not configured"),
+					}
+				}
+				applied, updateErr = conditionalRepo.UpdateLeonardoTokenIfCookieUnchanged(
+					ctx,
+					freshAccount.ID,
+					attemptedAccount.GetCredential("cookie"),
+					leonardoTokenCredentialFields(newCredentials),
+				)
 			}
-			applied, updateErr := conditionalRepo.UpdateAdobeTokenIfCookieUnchanged(
-				ctx,
-				freshAccount.ID,
-				attemptedAccount.GetCredential("cookie"),
-				adobeTokenCredentialFields(newCredentials),
-			)
 			if updateErr != nil {
 				slog.Error("oauth_refresh_update_failed",
 					"account_id", freshAccount.ID,
@@ -377,7 +396,7 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 				currentAccount, readErr := api.accountRepo.GetByID(ctx, freshAccount.ID)
 				if readErr != nil || currentAccount == nil {
 					if readErr == nil {
-						readErr = fmt.Errorf("account not found after adobe token CAS miss")
+						readErr = fmt.Errorf("account not found after %s token CAS miss", freshAccount.Platform)
 					}
 					return nil, fmt.Errorf("%w: %v", errOAuthRefreshAccountRereadFailed, readErr)
 				}

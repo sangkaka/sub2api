@@ -164,6 +164,8 @@ func TestNewGatewayServiceWiresCompositeModelOwnershipResolver(t *testing.T) {
 		nil,
 		nil, // adobeTokenProvider
 		nil,
+
+		nil,
 		nil,
 		nil,
 		nil,
@@ -173,8 +175,7 @@ func TestNewGatewayServiceWiresCompositeModelOwnershipResolver(t *testing.T) {
 		nil,
 		resolver,
 		nil,
-		nil,
-	)
+		nil)
 	require.Same(t, resolver, svc.compositeResolver)
 
 	decision, err := resolver.Resolve(context.Background(), groupID, "reasoning-alias", CompositeRouteEndpointResponses)
@@ -269,7 +270,7 @@ func TestCompositeGroupSchedulerHasAllCanonicalPlatformBuckets(t *testing.T) {
 		platforms = append(platforms, platform)
 	}
 	require.ElementsMatch(t,
-		[]string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformKiro, PlatformGrok, PlatformAdobe, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformTypeSafe, PlatformCommandCode, PlatformCline},
+		[]string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformKiro, PlatformGrok, PlatformAdobe, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformTypeSafe, PlatformCommandCode, PlatformCline, PlatformLeonardo},
 		platforms,
 	)
 }

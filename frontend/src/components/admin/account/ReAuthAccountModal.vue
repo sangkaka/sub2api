@@ -384,8 +384,23 @@
         </div>
       </div>
 
+      <!-- Leonardo：重新导出浏览器 cookie 即完成重登。 -->
+      <div v-if="isLeonardo" class="space-y-4">
+        <div>
+          <label class="input-label">{{ t('admin.accounts.leonardo.cookieLabel') }}</label>
+          <textarea
+            v-model="leonardoCookie"
+            rows="6"
+            class="input font-mono text-xs"
+            :placeholder="t('admin.accounts.leonardo.cookiePlaceholder')"
+            data-testid="reauth-leonardo-cookie-input"
+          ></textarea>
+          <p class="input-hint">{{ t('admin.accounts.leonardo.cookieHint') }}</p>
+        </div>
+      </div>
+
       <OAuthAuthorizationFlow
-        v-if="!isKiroImportMode && !isAdobe"
+        v-if="!isKiroImportMode && !isAdobe && !isLeonardo"
         ref="oauthFlowRef"
         :add-method="addMethod"
         :auth-url="currentAuthUrl"
@@ -426,6 +441,16 @@
           @click="handleAdobeReauth"
         >
           {{ adobeSubmitting ? t('admin.accounts.oauth.verifying') : t('admin.accounts.reAuthorize') }}
+        </button>
+        <button
+          v-else-if="isLeonardo"
+          type="button"
+          :disabled="!leonardoCookie.trim()"
+          class="btn btn-primary"
+          data-testid="reauth-leonardo-submit"
+          @click="handleLeonardoReAuth"
+        >
+          {{ t('common.confirm') }}
         </button>
         <button
           v-else-if="isKiroImportMode"
@@ -572,12 +597,15 @@ const kiroImportTokenPlaceholder = computed(() => {
     : '{"accessToken":"...","refreshToken":"...","authMethod":"social","provider":"' + kiroImportProvider.value + '"}'
 })
 
+const leonardoCookie = ref('')
+
 const isOpenAI = computed(() => props.account?.platform === 'openai')
 const isOpenAILike = computed(() => isOpenAI.value)
 const isGemini = computed(() => props.account?.platform === 'gemini')
 const isAnthropic = computed(() => props.account?.platform === 'anthropic')
 const isAntigravity = computed(() => props.account?.platform === 'antigravity')
 const isKiro = computed(() => props.account?.platform === 'kiro')
+const isLeonardo = computed(() => props.account?.platform === 'leonardo' && props.account?.type === 'oauth')
 const isGrok = computed(() => props.account?.platform === 'grok')
 const isAdobe = computed(() => props.account?.platform === 'adobe')
 
@@ -840,6 +868,17 @@ const handleAdobeReauth = async () => {
   } finally {
     adobeSubmitting.value = false
   }
+}
+
+const handleLeonardoReAuth = async () => {
+  const cookie = leonardoCookie.value.trim()
+  if (!cookie) return
+  await updateAccountCredentials({
+    type: 'oauth',
+    // 只换 cookie；旧 JWT/access_token 留给后台刷新器按新 cookie 重换，
+    // 这里清掉可避免「新 cookie + 旧 token」的短暂混用。
+    credentials: buildUpdatedCredentials({ cookie, access_token: '', expires_at: '' })
+  })
 }
 
 const handleGenerateUrl = async () => {

@@ -183,6 +183,7 @@ func newTestGatewayHandler(t *testing.T, group *service.Group, accounts []*servi
 		nil, // claudeTokenProvider
 		nil, // kiroTokenProvider
 		nil, // adobeTokenProvider
+		nil, // leonardoTokenProvider
 		nil, // kiroCooldownStore
 		nil, // sessionLimitCache
 		nil, // rpmCache

@@ -246,6 +246,7 @@ func isForcedUsageBillingRequestID(requestID string) bool {
 		strings.HasPrefix(id, "grok-video:") ||
 		strings.HasPrefix(id, "grok_audio:") ||
 		strings.HasPrefix(id, "grok_realtime:") ||
+		strings.HasPrefix(id, "leonardo-image:") ||
 		strings.HasPrefix(id, GeminiCachedContentUsageRequestIDPrefix)
 }
 
@@ -653,6 +654,27 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 	}
 }
 
+// recordUsageOpts 内部选项，承载计费主干需要但函数签名不便逐个透传的差异点。
+// 长上下文阶梯计价已由价格目录数据驱动（见 BillingService 阶梯单价表），故不再在此参数化。
+type recordUsageOpts struct {
+	// Kiro 账号在上游返回 auto 等无法定价模型时使用保守计费兜底。
+	IsKiroAccount bool
+	// ImageBillingPlatform 是出图按次兜底价的平台隔离轴（账号 platform）。
+	// 仅 adobe 套 Firefly 分档；空值与 openai/gemini/leonardo 等不得按模型名命中 Adobe 表。
+	ImageBillingPlatform string
+}
+
+// firstRecordUsageOpts 从可变参数中取首个非 nil 选项，缺省返回零值选项。
+// 计费主干的多数调用点无需定制选项，可变参数让这些调用点保持与上游一致的签名。
+func firstRecordUsageOpts(opts []*recordUsageOpts) *recordUsageOpts {
+	for _, opt := range opts {
+		if opt != nil {
+			return opt
+		}
+	}
+	return &recordUsageOpts{}
+}
+
 // RecordUsage 记录使用量并扣费（或更新订阅用量）
 func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInput) error {
 	return s.recordUsageCore(ctx, &recordUsageCoreInput{
@@ -807,7 +829,11 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 
 	// 计算费用
-	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, pricingAt)
+	opts := &recordUsageOpts{
+		IsKiroAccount:        account != nil && account.Platform == PlatformKiro,
+		ImageBillingPlatform: imageBillingPlatform(account),
+	}
+	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, pricingAt, opts)
 	// response_model：按上游成功响应自报的模型计费（渠道显式开启才生效）。
 	// 采纳条件见 responseModelBillingDeclaration + hasIdentifiedResponseModelPricing
 	// + responseModelBillingAdoptable。任一条件不满足都静默回落基线，即开启本模式前的
@@ -819,7 +845,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		result.ImageCount > 0 || result.AudioUsage != nil || result.SearchCount > 0 || result.CacheStorageTokenHours > 0,
 	); responseModel != "" && !strings.EqualFold(responseModel, strings.TrimSpace(billingModel)) {
 		if identified, responseChannelPriced := s.hasIdentifiedResponseModelPricing(ctx, responseModel, apiKey); identified {
-			responseCost := s.calculateRecordUsageCost(ctx, result, apiKey, responseModel, multiplier, imageMultiplier, pricingAt)
+			responseCost := s.calculateRecordUsageCost(ctx, result, apiKey, responseModel, multiplier, imageMultiplier, pricingAt, opts)
 			baselineChannelPriced := s.resolveChannelPricing(ctx, billingModel, apiKey) != nil
 			if responseModelBillingAdoptable(cost, responseCost, baselineChannelPriced, responseChannelPriced) {
 				// billingModel 到此为止只是定价查表的入参，后续流程只消费 cost，
@@ -994,7 +1020,11 @@ func (s *GatewayService) QuoteUsageCost(ctx context.Context, input *RecordUsageI
 	}
 	multiplier, imageMultiplier, pricingAt := s.recordUsageMultipliers(ctx, input.APIKey, user, input.PricingAt)
 	billingModel := s.recordUsageBillingModel(ctx, input.APIKey, input.Result, input.ChannelUsageFields)
-	cost := s.calculateRecordUsageCost(ctx, input.Result, input.APIKey, billingModel, multiplier, imageMultiplier, pricingAt)
+	opts := &recordUsageOpts{
+		IsKiroAccount:        input.Account != nil && input.Account.Platform == PlatformKiro,
+		ImageBillingPlatform: imageBillingPlatform(input.Account),
+	}
+	cost := s.calculateRecordUsageCost(ctx, input.Result, input.APIKey, billingModel, multiplier, imageMultiplier, pricingAt, opts)
 	if cost == nil {
 		return 0
 	}
@@ -1020,13 +1050,14 @@ func (s *GatewayService) calculateRecordUsageCost(
 	multiplier float64,
 	imageMultiplier float64,
 	pricingAt time.Time,
+	opts ...*recordUsageOpts,
 ) *CostBreakdown {
 	// 图片生成：渠道定价为 token 计费时走 token 路径，否则走图片计费
 	if result.ImageCount > 0 {
 		if resolved := s.resolveChannelPricing(ctx, billingModel, apiKey); resolved != nil && resolved.Mode == BillingModeToken {
-			return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
+			return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt, opts...)
 		}
-		return s.calculateImageCost(ctx, result, apiKey, billingModel, imageMultiplier)
+		return s.calculateImageCost(ctx, result, apiKey, billingModel, imageMultiplier, firstRecordUsageOpts(opts).ImageBillingPlatform)
 	}
 
 	// Voice audio (TTS / STT / realtime) when present on the forward result.
@@ -1053,7 +1084,7 @@ func (s *GatewayService) calculateRecordUsageCost(
 	if isCacheStorageOnlyResult(result) {
 		tokenCost = &CostBreakdown{}
 	} else {
-		tokenCost = s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
+		tokenCost = s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt, opts...)
 	}
 	if result.SearchCount > 0 {
 		price := groupSearchPricePer1kFromAPIKey(apiKey)
@@ -1078,6 +1109,90 @@ func (s *GatewayService) calculateRecordUsageCost(
 		tokenCost.ActualCost += storageCost * multiplier
 	}
 	return tokenCost
+}
+
+const (
+	kiroConservativeFallbackBillingModel = "claude-opus-4-6"
+	kiroQwenCoderNextBillingModel        = "qwen3-coder-next"
+	kiroQwenCoderNextAnchorModel         = "claude-sonnet-4-5"
+	// Kiro 界面里 Qwen 是 0.05x Credit，Sonnet 4.5 是 1.3x。兜底价按这个比例缩放 Sonnet 单价。
+	kiroQwenCoderNextCreditRatio = 0.05 / 1.3
+)
+
+func isKiroQwenCoderNextBillingModel(billingModel string, opts *recordUsageOpts) bool {
+	if opts == nil || !opts.IsKiroAccount {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(billingModel), kiroQwenCoderNextBillingModel)
+}
+
+func (s *GatewayService) calculateKiroQwenCoderNextTokenCost(tokens UsageTokens, multiplier float64) *CostBreakdown {
+	if s == nil || s.billingService == nil {
+		return nil
+	}
+	pricing, err := s.billingService.GetModelPricing(kiroQwenCoderNextAnchorModel)
+	if err != nil || pricing == nil {
+		logger.LegacyPrintf("service.gateway", "Calculate Kiro Qwen fallback cost failed: %v", err)
+		return nil
+	}
+	scaled := scaleModelPricing(*pricing, kiroQwenCoderNextCreditRatio)
+	// 系数只缩放基础单价，不带 Sonnet 4.5 超过 20 万 token 的长上下文加价。
+	scaled.LongContextInputThreshold = 0
+	scaled.LongContextInputMultiplier = 0
+	scaled.LongContextOutputMultiplier = 0
+	cost := s.billingService.computeTokenBreakdown(&scaled, tokens, multiplier, "", false)
+	if cost != nil && cost.BillingMode == "" {
+		cost.BillingMode = string(BillingModeToken)
+	}
+	return cost
+}
+
+func scaleModelPricing(pricing ModelPricing, ratio float64) ModelPricing {
+	pricing.InputPricePerToken *= ratio
+	pricing.InputPricePerTokenPriority *= ratio
+	pricing.OutputPricePerToken *= ratio
+	pricing.OutputPricePerTokenPriority *= ratio
+	pricing.CacheCreationPricePerToken *= ratio
+	pricing.CacheCreationPricePerTokenPriority *= ratio
+	pricing.CacheReadPricePerToken *= ratio
+	pricing.CacheReadPricePerTokenPriority *= ratio
+	pricing.CacheCreation5mPrice *= ratio
+	pricing.CacheCreation1hPrice *= ratio
+	return pricing
+}
+
+func shouldUseKiroConservativeBillingFallback(result *ForwardResult, billingModel string, opts *recordUsageOpts) bool {
+	if result == nil {
+		return false
+	}
+	if opts == nil || !opts.IsKiroAccount {
+		return false
+	}
+	if isExactKiroGPT56Model(billingModel) || isExactKiroGPT56Model(result.Model) {
+		return false
+	}
+	return true
+}
+
+func isExactKiroGPT56Model(model string) bool {
+	switch strings.TrimSpace(strings.ToLower(model)) {
+	case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *GatewayService) calculateKiroConservativeTokenCost(tokens UsageTokens, multiplier float64) *CostBreakdown {
+	if s == nil || s.billingService == nil {
+		return nil
+	}
+	cost, err := s.billingService.CalculateCost(kiroConservativeFallbackBillingModel, tokens, multiplier)
+	if err != nil {
+		logger.LegacyPrintf("service.gateway", "Calculate conservative Kiro fallback cost failed: %v", err)
+		return nil
+	}
+	return cost
 }
 
 // compositeBillableModel 决定 composite 分组请求的计费模型：来源覆盖把计费模型
@@ -1167,6 +1282,7 @@ func (s *GatewayService) calculateImageCost(
 	apiKey *APIKey,
 	billingModel string,
 	multiplier float64,
+	platform string,
 ) *CostBreakdown {
 	sizeTier := NormalizeImageBillingTierOrDefault(result.ImageSize)
 	resolved := s.resolveChannelPricing(ctx, billingModel, apiKey)
@@ -1184,7 +1300,7 @@ func (s *GatewayService) calculateImageCost(
 	}
 	groupConfig := imagePriceConfigFromAPIKey(apiKey)
 	if apiKeyHasConfiguredImagePrice(apiKey, sizeTier) {
-		return s.billingService.CalculateImageCost(billingModel, sizeTier, result.ImageCount, groupConfig, multiplier)
+		return s.billingService.CalculateImageCostWithPlatform(billingModel, sizeTier, result.ImageCount, groupConfig, multiplier, platform)
 	}
 	if resolved != nil && resolved.Source == PricingSourceChannel {
 		tokens := UsageTokens{
@@ -1213,7 +1329,7 @@ func (s *GatewayService) calculateImageCost(
 		return cost
 	}
 
-	return s.billingService.CalculateImageCost(billingModel, sizeTier, result.ImageCount, groupConfig, multiplier)
+	return s.billingService.CalculateImageCostWithPlatform(billingModel, sizeTier, result.ImageCount, groupConfig, multiplier, platform)
 }
 
 // calculateTokenCost 计算 Token 计费：路径选择（分组/渠道定价 → 内置定价）
@@ -1225,6 +1341,7 @@ func (s *GatewayService) calculateTokenCost(
 	billingModel string,
 	multiplier float64,
 	pricingAt time.Time,
+	opts ...*recordUsageOpts,
 ) *CostBreakdown {
 	tokens := UsageTokens{
 		InputTokens:           result.Usage.InputTokens,
@@ -1234,6 +1351,16 @@ func (s *GatewayService) calculateTokenCost(
 		CacheCreation5mTokens: result.Usage.CacheCreation5mTokens,
 		CacheCreation1hTokens: result.Usage.CacheCreation1hTokens,
 		ImageOutputTokens:     result.Usage.ImageOutputTokens,
+	}
+
+	// qwen3-coder-next 没有目录价，查价失败后会掉进 Opus 保守兜底。
+	// 分组或渠道已经给这个名字定价时不插入，沿用下面的正常路径。
+	if isKiroQwenCoderNextBillingModel(billingModel, firstRecordUsageOpts(opts)) &&
+		s.resolveChannelPricing(ctx, billingModel, apiKey) == nil {
+		if fallback := s.calculateKiroQwenCoderNextTokenCost(tokens, multiplier); fallback != nil {
+			logger.LegacyPrintf("service.gateway", "Using Kiro credit-scaled fallback pricing for model=%s", billingModel)
+			return fallback
+		}
 	}
 
 	var resolved *ResolvedPricing
@@ -1256,7 +1383,16 @@ func (s *GatewayService) calculateTokenCost(
 	})
 	if err != nil {
 		logger.LegacyPrintf("service.gateway", "Calculate cost failed: %v", err)
+		if shouldUseKiroConservativeBillingFallback(result, billingModel, firstRecordUsageOpts(opts)) {
+			if fallback := s.calculateKiroConservativeTokenCost(tokens, multiplier); fallback != nil {
+				logger.LegacyPrintf("service.gateway", "Using conservative Kiro fallback pricing for model=%s", billingModel)
+				return fallback
+			}
+		}
 		return &CostBreakdown{ActualCost: 0}
+	}
+	if cost != nil && cost.BillingMode == "" {
+		cost.BillingMode = string(BillingModeToken)
 	}
 	return cost
 }
@@ -1348,6 +1484,10 @@ func (s *GatewayService) buildRecordUsageLog(
 		usageLog.TotalCost = cost.TotalCost
 		usageLog.ActualCost = cost.ActualCost
 		usageLog.LongContextBillingApplied = cost.LongContextBillingApplied
+	}
+	if result.Usage.KiroCredits > 0 {
+		kiroCredits := result.Usage.KiroCredits
+		usageLog.KiroCredits = &kiroCredits
 	}
 
 	return usageLog

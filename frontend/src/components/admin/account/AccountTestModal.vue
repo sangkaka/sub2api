@@ -448,7 +448,8 @@ const supportsGeminiImageTest = computed(() => {
 const supportsOpenAIImageTest = computed(() => {
   const modelID = selectedModelId.value.toLowerCase()
   if (!modelID.startsWith('gpt-image-')) return false
-  return props.account?.platform === 'openai'
+  // Leonardo 是纯出图平台：Cookie 号与中转号的测试都真实出一张图。
+  return props.account?.platform === 'openai' || props.account?.platform === 'leonardo'
 })
 
 const isGrokImageModel = (id: string) => {

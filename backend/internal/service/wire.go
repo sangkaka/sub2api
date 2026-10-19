@@ -238,6 +238,7 @@ func ProvideAccountUsageService(
 	openAIGatewayService *OpenAIGatewayService,
 	kiroTokenProvider *KiroTokenProvider,
 	adobeTokenProvider *AdobeTokenProvider,
+	leonardoTokenProvider *LeonardoTokenProvider,
 ) *AccountUsageService {
 	service := NewAccountUsageService(
 		accountRepo,
@@ -254,6 +255,7 @@ func ProvideAccountUsageService(
 	)
 	service.agentIdentityWS = openAIGatewayService
 	service.SetAdobeTokenProvider(adobeTokenProvider)
+	service.SetLeonardoTokenProvider(leonardoTokenProvider)
 	return service.SetKiroTokenProvider(kiroTokenProvider)
 }
 
@@ -263,6 +265,7 @@ func ProvideAccountTestService(
 	claudeTokenProvider *ClaudeTokenProvider,
 	kiroTokenProvider *KiroTokenProvider,
 	grokTokenProvider *GrokTokenProvider,
+	leonardoTokenProvider *LeonardoTokenProvider,
 	antigravityGatewayService *AntigravityGatewayService,
 	httpUpstream HTTPUpstream,
 	cfg *config.Config,
@@ -288,6 +291,7 @@ func ProvideAccountTestService(
 	service.SetSettingService(settingService)
 	service.SetPluginManager(pluginManager)
 	service.SetAdobeTokenProvider(adobeTokenProvider)
+	service.SetLeonardoTokenProvider(leonardoTokenProvider)
 	return service
 }
 
@@ -393,8 +397,24 @@ func ProvideAdobeTokenProvider(accountRepo AccountRepository, refreshAPI *OAuthR
 	return NewAdobeTokenProvider(accountRepo, refreshAPI)
 }
 
+// ProvideLeonardoImageService 构造 Leonardo 出图服务；对象存储由设置服务动态
+// 解析，未配置时同步返回 b64_json 即可。
+func ProvideLeonardoImageService(settings *ImageStorageSettingService) *LeonardoImageService {
+	return NewLeonardoImageService(settings.Resolver())
+}
+
 func ProvideKiroCooldownStore(redisClient *redis.Client) KiroCooldownStore {
 	return kirocooldown.NewStore(redisClient)
+}
+
+// ProvideLeonardoTokenProvider creates LeonardoTokenProvider with OAuthRefreshAPI
+// injection so the request path shares locks and CAS persistence with the
+// background TokenRefreshService.
+func ProvideLeonardoTokenProvider(
+	accountRepo AccountRepository,
+	refreshAPI *OAuthRefreshAPI,
+) *LeonardoTokenProvider {
+	return NewLeonardoTokenProvider(accountRepo, refreshAPI)
 }
 
 // ProvideGrokTokenProvider creates GrokTokenProvider with OAuthRefreshAPI injection.
@@ -943,6 +963,8 @@ var ProviderSet = wire.NewSet(
 	ProvideGeminiTokenProvider,
 	ProvideKiroTokenProvider,
 	ProvideAdobeTokenProvider,
+	ProvideLeonardoTokenProvider,
+	ProvideLeonardoImageService,
 	ProvideKiroCooldownStore,
 	NewGeminiMessagesCompatService,
 	ProvideAntigravityTokenProvider,

@@ -136,13 +136,15 @@ type UsageCache struct {
 	windowStatsCache  sync.Map           // accountID -> *windowStatsCache
 	antigravityCache  sync.Map           // accountID -> *antigravityUsageCache
 	kiroUsageCache    sync.Map           // accountID -> *kiroUsageCache
-	adobeUsageCache   sync.Map           // accountID -> *adobeUsageCache
-	apiFlight         singleflight.Group // 防止同一账号的并发请求击穿缓存（Anthropic）
-	antigravityFlight singleflight.Group // 防止同一 Antigravity 账号的并发请求击穿缓存
-	kiroUsageFlight   singleflight.Group // 防止同一 Kiro 账号的并发请求击穿缓存
-	adobeUsageFlight  singleflight.Group // 防止同一 Adobe 账号的并发请求击穿缓存
-	openAIProbeCache  sync.Map           // accountID -> time.Time
-	grokProbeCache    sync.Map           // accountID -> last billing probe attempt
+	adobeUsageCache     sync.Map           // accountID -> *adobeUsageCache
+	leonardoUsageCache  sync.Map           // accountID -> *leonardoUsageCache
+	apiFlight           singleflight.Group // 防止同一账号的并发请求击穿缓存（Anthropic）
+	antigravityFlight   singleflight.Group // 防止同一 Antigravity 账号的并发请求击穿缓存
+	kiroUsageFlight     singleflight.Group // 防止同一 Kiro 账号的并发请求击穿缓存
+	adobeUsageFlight    singleflight.Group // 防止同一 Adobe 账号的并发请求击穿缓存
+	leonardoUsageFlight singleflight.Group // 防止同一 Leonardo 账号的并发请求击穿缓存
+	openAIProbeCache    sync.Map           // accountID -> time.Time
+	grokProbeCache      sync.Map           // accountID -> last billing probe attempt
 }
 
 // NewUsageCache 创建 UsageCache 实例
@@ -270,6 +272,12 @@ type UsageInfo struct {
 	// Antigravity 废弃模型转发规则 (old_model_id -> new_model_id)
 	ModelForwardingRules map[string]string `json:"model_forwarding_rules,omitempty"`
 
+	// Leonardo 积分余额快照（各池剩余量 + 套餐常量表给出的上限）
+	LeonardoPlan         string                   `json:"leonardo_plan,omitempty"`
+	LeonardoPlanName     string                   `json:"leonardo_plan_name,omitempty"`
+	LeonardoCredits      *LeonardoCreditsSnapshot `json:"leonardo_credits,omitempty"`
+	LeonardoTokenRenewal string                   `json:"leonardo_token_renewal,omitempty"`
+
 	// Antigravity 账号是否被上游禁止 (HTTP 403)
 	IsForbidden     bool   `json:"is_forbidden,omitempty"`
 	ForbiddenReason string `json:"forbidden_reason,omitempty"`
@@ -373,9 +381,10 @@ type AccountUsageService struct {
 	identityCache           IdentityCache
 	tlsFPProfileService     *TLSFingerprintProfileService
 	kiroCooldownStore       KiroCooldownStore
-	agentIdentityTaskMu     sync.Mutex
-	agentIdentityWS         agentIdentityWSConnectionInvalidator
-	adobeTokenProvider      *AdobeTokenProvider
+	agentIdentityTaskMu         sync.Mutex
+	agentIdentityWS             agentIdentityWSConnectionInvalidator
+	adobeTokenProvider          *AdobeTokenProvider
+	sharedLeonardoTokenProvider *LeonardoTokenProvider
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
@@ -474,6 +483,13 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 
 	if account.Platform == PlatformAdobe {
 		return s.getAdobeUsage(ctx, account, "active", forceProbe)
+	}
+	if account.Platform == PlatformLeonardo && account.Type == AccountTypeOAuth {
+		usage, err := s.getLeonardoUsage(ctx, account, "active", forceProbe)
+		if err == nil && usage != nil && usage.Error == "" {
+			s.tryClearRecoverableAccountError(ctx, account)
+		}
+		return usage, err
 	}
 
 	// Antigravity 平台：使用 AntigravityQuotaFetcher 获取额度
@@ -708,6 +724,13 @@ func (s *AccountUsageService) getPassiveUsageForAccount(ctx context.Context, acc
 
 	if account.Platform == PlatformAdobe {
 		return s.getAdobeUsage(ctx, account, "passive", false)
+	}
+	// Leonardo Cookie 号：被动读取走积分快照缓存（未命中时拉一次），与 Kiro 同构。
+	if account != nil && account.Platform == PlatformLeonardo {
+		if account.Type != AccountTypeOAuth {
+			return nil, fmt.Errorf("passive usage only supported for Leonardo cookie accounts")
+		}
+		return s.getLeonardoUsage(ctx, account, "passive", false)
 	}
 
 	if !supportsAnthropicPassiveUsage(account) {

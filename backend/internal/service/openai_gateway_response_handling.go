@@ -1852,6 +1852,13 @@ func extractOpenAISSEErrorMessage(payload []byte) string {
 // stream that ended on a bare error. created_at and sequence_number are always
 // written: strict clients (grok-build, Codex) reject the frame without them.
 func buildOpenAIResponseFailedSSE(responseID, model string, createdAt int64, source []byte, fallbackMessage string) string {
+	return "event: response.failed\ndata: " + string(buildOpenAIResponseFailedPayload(responseID, model, createdAt, source, fallbackMessage)) + "\n\n"
+}
+
+// buildOpenAIResponseFailedPayload 构造 response.failed 事件的 JSON（不含 SSE 帧），
+// 错误 type/code/message 取自 source（error 或 response.error）。
+// created_at 与 sequence_number 始终写入。
+func buildOpenAIResponseFailedPayload(responseID, model string, createdAt int64, source []byte, fallbackMessage string) []byte {
 	responseID = strings.TrimSpace(responseID)
 	if responseID == "" {
 		responseID = "resp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
@@ -1904,7 +1911,7 @@ func buildOpenAIResponseFailedSSE(responseID, model string, createdAt int64, sou
 			`,"response":{"object":"response","created_at":` + strconv.FormatInt(createdAt, 10) +
 			`,"status":"failed","output":[],"error":{"code":"upstream_error","message":"Upstream response failed"}}}`)
 	}
-	return "event: response.failed\ndata: " + string(payload) + "\n\n"
+	return payload
 }
 
 func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string, clientOutputStarted bool) ([]byte, bool) {

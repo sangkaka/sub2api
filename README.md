@@ -769,6 +769,11 @@ Or set `GATEWAY_OPENAI_WS_MODE_ROUTER_V2_ENABLED=true` in the environment.
 Use `http_bridge` for client-WebSocket/upstream-HTTP operation when rolling out
 or mitigating upstream WebSocket issues.
 
+Use `ws_bridge` to send streaming HTTP `/v1/responses` requests upstream over
+pooled WebSocket connections as well. WebSocket clients behave exactly as in
+`ctx_pool`. Non-streaming requests, `/responses/*` subpaths (including compact),
+and first payloads above `http_bridge_threshold_bytes` stay on upstream HTTP.
+
 #### Force OpenAI upstream HTTP/SSE
 
 When an egress proxy or network repeatedly reconnects OpenAI Responses

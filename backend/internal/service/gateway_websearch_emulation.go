@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/anthropictokenizer"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/websearch"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -208,7 +209,7 @@ func (s *GatewayService) handleWebSearchEmulation(
 		stream = parsed.Stream
 		group = parsed.Group
 	}
-	inputTokens := estimateKiroInputTokens(ctx, body)
+	inputTokens := estimateKiroInputTokens(ctx, s.kiroMeteringAlgorithm(ctx), body)
 	cacheUsage := s.buildKiroCacheEmulationUsage(ctx, account, group, body, model, inputTokens)
 	return writeEmulatedWebSearchResolved(ctx, c, account, model, stream, webSearchQueryForParsedRequest(parsed), inputTokens, cacheUsage)
 }
@@ -218,7 +219,7 @@ func (s *GatewayService) handleWebSearchEmulation(
 func writeEmulatedWebSearch(
 	ctx context.Context, c *gin.Context, account *Account, body []byte, model string, stream bool,
 ) (*ForwardResult, error) {
-	return writeEmulatedWebSearchResolved(ctx, c, account, model, stream, extractSearchQueryFromBody(body), estimateKiroInputTokens(ctx, body), nil)
+	return writeEmulatedWebSearchResolved(ctx, c, account, model, stream, extractSearchQueryFromBody(body), estimateKiroInputTokens(ctx, anthropictokenizer.AlgorithmOfficial, body), nil)
 }
 
 func writeEmulatedWebSearchResolved(

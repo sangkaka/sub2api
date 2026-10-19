@@ -82,6 +82,7 @@ type GatewayHandler struct {
 	concurrencyHelper          *ConcurrencyHelper
 	userMsgQueueHelper         *UserMsgQueueHelper
 	adobeImageService          *service.AdobeImageService
+	leonardoImageService       *service.LeonardoImageService
 	imageLimiter               *imageConcurrencyLimiter
 	maxAccountSwitches         int
 	maxAccountSwitchesGemini   int
@@ -107,6 +108,7 @@ func NewGatewayHandler(
 	contentModerationService *service.ContentModerationService,
 	userMsgQueueService *service.UserMessageQueueService,
 	adobeImageService *service.AdobeImageService,
+	leonardoImageService *service.LeonardoImageService,
 	cfg *config.Config,
 	settingService *service.SettingService,
 ) *GatewayHandler {
@@ -145,6 +147,7 @@ func NewGatewayHandler(
 		concurrencyHelper:         NewConcurrencyHelper(concurrencyService, SSEPingFormatClaude, pingInterval),
 		userMsgQueueHelper:        umqHelper,
 		adobeImageService:         adobeImageService,
+		leonardoImageService:      leonardoImageService,
 		imageLimiter:              sharedImageConcurrencyLimiter,
 		maxAccountSwitches:        maxAccountSwitches,
 		maxAccountSwitchesGemini:  maxAccountSwitchesGemini,
@@ -1565,6 +1568,8 @@ func defaultModelIDsForPlatform(platform string) []string {
 			ids = append(ids, model.ID)
 		}
 		return ids
+	case service.PlatformLeonardo:
+		return service.LeonardoModelIDs()
 	case service.PlatformKiro:
 		ids := make([]string, 0, len(kiro.DefaultModels))
 		for _, model := range kiro.DefaultModels {

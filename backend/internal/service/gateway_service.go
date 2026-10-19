@@ -814,6 +814,7 @@ type GatewayService struct {
 	balanceNotifyService  *BalanceNotifyService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	adobeTokenProvider    *AdobeTokenProvider
+	leonardoTokenProvider *LeonardoTokenProvider
 }
 
 // NewGatewayService creates a new GatewayService
@@ -838,6 +839,7 @@ func NewGatewayService(
 	claudeTokenProvider *ClaudeTokenProvider,
 	kiroTokenProvider *KiroTokenProvider,
 	adobeTokenProvider *AdobeTokenProvider,
+	leonardoTokenProvider *LeonardoTokenProvider,
 	kiroCooldownStore KiroCooldownStore,
 	sessionLimitCache SessionLimitCache,
 	rpmCache RPMCache,
@@ -889,9 +891,13 @@ func NewGatewayService(
 		balanceNotifyService:  balanceNotifyService,
 		userPlatformQuotaRepo: userPlatformQuotaRepo,
 		adobeTokenProvider:    adobeTokenProvider,
+		leonardoTokenProvider: leonardoTokenProvider,
 	}
 	if svc.adobeTokenProvider == nil {
 		svc.adobeTokenProvider = NewAdobeTokenProvider(accountRepo, nil)
+	}
+	if svc.leonardoTokenProvider == nil {
+		svc.leonardoTokenProvider = NewLeonardoTokenProvider(accountRepo, nil)
 	}
 	if compositeResolver != nil {
 		compositeResolver.SetModelOwnershipResolver(svc.resolveCompositeModelOwnership)
@@ -1443,6 +1449,13 @@ func (s *GatewayService) getOAuthToken(ctx context.Context, account *Account) (s
 
 	if account.Platform == PlatformAdobe && account.Type == AccountTypeOAuth {
 		accessToken, err := s.getAdobeOAuthToken(ctx, account)
+		if err != nil {
+			return "", "", err
+		}
+		return accessToken, "oauth", nil
+	}
+	if account.Platform == PlatformLeonardo && account.Type == AccountTypeOAuth {
+		accessToken, err := s.getLeonardoOAuthToken(ctx, account)
 		if err != nil {
 			return "", "", err
 		}

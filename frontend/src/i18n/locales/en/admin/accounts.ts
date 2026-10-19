@@ -112,6 +112,13 @@ export default {
       kiroCooldown: 'Kiro Cooldown',
       kiroCreditUnitPriceUsd: 'Credit Unit Price',
       kiroCreditUnitPriceUsdHint: 'Used only to estimate Kiro Credits cost in today stats. 0 hides the estimate.',
+      leonardoCreditUnitPriceUsd: 'Credit Unit Price (USD)',
+      leonardoCreditUnitPriceUsdHint: 'Used only to estimate the cost of Leonardo credits in today stats; 0 hides the estimate. Reference (monthly fee ÷ monthly fast credits): Essential $12 / 8,500 ≈ $0.0014, Premium $30 / 25,000 = $0.0012, Ultimate $60 / 60,000 = $0.001. Annual billing is cheaper.',
+      leonardoMaxQuality: 'Max quality',
+      leonardoMaxQualityUnlimited: 'Unlimited',
+      leonardoMaxShortEdge: 'Max short edge (px)',
+      leonardoMaxUpscaleFactor: 'Max upscale factor',
+      leonardoImageLimitsHint: 'Caps Leonardo credit usage. Requests above the max quality are generated at the max quality. When the requested short edge exceeds the limit, a smaller image with the exact same aspect ratio is generated and then upscaled to the requested size (no stretching or cropping); billing follows the delivered size. 0 / Unlimited means no limit; the upscale factor defaults to 2 (1–4).',
       kiroProfileError: 'Profile Error',
       kiroProfileHint: 'Resolve and save a valid profileArn for this account',
       kiroRuntimeResetsAt: 'Auto resumes at {time}',
@@ -119,6 +126,7 @@ export default {
       kiroUsageForbidden: 'Usage Forbidden',
       kiroUsageForbiddenHint: 'Usage fetch is blocked for this account, but request forwarding may still work',
       platforms: {
+        leonardo: 'Leonardo',
         anthropic: 'Anthropic',
         claude: 'Claude',
         openai: 'OpenAI',
@@ -237,6 +245,8 @@ export default {
         grokOauth: 'Grok OAuth',
         kiroApikey: 'Connect to AWS directly via API Key',
         kiroApikeyRelay: 'Relay via external API Key + Base URL',
+        leonardoOauth: 'Leonardo web Cookie, direct GraphQL',
+        leonardoApikeyRelay: 'OpenAI-compatible relay fallback',
         kiroOauth: 'Social OAuth / AWS Builder ID / Import',
         adobeOauth: 'Firefly cookie',
         adobeApikeyRelay: 'Relay via external API Key + Base URL',
@@ -683,6 +693,7 @@ export default {
         wsModeCtxPool: 'Context Pool (ctx_pool)',
         wsModePassthrough: 'Passthrough (passthrough)',
         wsModeHttpBridge: 'HTTP Bridge (http_bridge)',
+        wsModeWsBridge: 'WebSocket Bridge (ws_bridge)',
         wsModeShared: 'Shared (shared)',
         wsModeDedicated: 'Dedicated (dedicated)',
         wsModeCtxPoolHint:
@@ -691,6 +702,8 @@ export default {
           'The gateway opens a separate upstream WS connection for each client session, without using a connection pool.',
         wsModeHttpBridgeHint:
           'The gateway converts client WS requests to upstream HTTP requests, then converts SSE streaming responses back into WS messages.',
+        wsModeWsBridgeHint:
+          'The gateway converts streaming client HTTP requests to upstream WS requests over pooled connections, then converts WS messages back into an SSE stream; WS requests behave the same as the context pool. Non-streaming requests and requests above the HTTP bridge threshold still use HTTP.',
         oauthResponsesWebsocketsV2: 'OAuth WebSocket Mode',
         oauthResponsesWebsocketsV2Desc:
           'Only applies to OpenAI OAuth. This account can use OpenAI WebSocket Mode only when enabled.',
@@ -1767,9 +1780,25 @@ export default {
         usageTrend: '30-Day Cost & Request Trend',
         noData: 'No usage data available for this account',
         approxCost: 'approx. {amount}',
-        kiroCredits: 'Credits Used'
+        kiroCredits: 'Credits Used',
+        leonardoCredits: 'Credits Used'
       },
+      leonardo: {
+        cookieLabel: 'Leonardo Cookie',
+        cookieHint: 'Log in to app.leonardo.ai, then copy the full cookie string from DevTools (Application → Cookies or a request Cookie header). Must include __Secure-better-auth.session_token; session_data.* shards are recommended. A bare session token value also works. The short-lived JWT is exchanged and kept alive automatically from this cookie.',
+        cookiePlaceholder: '__Secure-better-auth.session_token=...; __Secure-better-auth.session_data.0=...',
+        cookieRequired: 'Leonardo cookie is required',
+        relayApiKeyHint: "API key for the relay upstream (sent as Authorization: Bearer)",
+        relayBaseUrlHint: 'OpenAI-compatible upstream (official https://api.openai.com or a third-party relay); fallback when native accounts fail'
+      },
+
       usageWindow: {
+        leonardoCredits: 'Credits',
+        leonardoFast: 'Fast Tokens',
+        leonardoFastDaily: 'Fast Tokens (daily)',
+        leonardoRollover: 'Rollover Bank',
+        leonardoTopUp: 'Top-up',
+        leonardoReset: 'Reset',
         statsTitle: '5-Hour Window Usage Statistics',
         statsTitleDaily: 'Daily Usage Statistics',
         geminiProDaily: 'Pro',

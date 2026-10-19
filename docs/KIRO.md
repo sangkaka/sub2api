@@ -34,6 +34,13 @@ git merge kiro/main          # 第二段：只剩 kiro 自有增量
 # 同上 → commit → push 开 PR，让 CI 先绿再合 main
 ```
 
+2026-10-19 同步到 v0.2.17 时，`git merge kiro/main` 不能再用。本地与 kiro
+有两个 merge-base（`9c2cca9e6` 与仍含 Adobe 的 `370c3eb51`）。递归 merge 把
+kiro 未再改动的 Adobe 文件当成 deleted-by-theirs，会整渠道删掉。正确做法是
+先合 upstream，再把 `370c3eb51..kiro/main` 的功能提交拣进来，跳过
+`618fbe0a9`（只描述了机械删除，没有可采纳的下线理由）。拣完用
+`git cherry-pick --quit` 清 sequencer，不要 `--abort`（会丢掉已解决的索引）。
+
 **两段合并的顺序不要改**：先 upstream 后 kiro，冲突被拆成两批，
 每批都能单独跑绿、单独回滚；反过来或一次合完会把两类语义揉在一个提交里。
 
@@ -46,6 +53,8 @@ git merge kiro/main          # 第二段：只剩 kiro 自有增量
 2. **平台枚举/白名单一律取并集**，保留 fork 的 `kiro` / `adobe`，也保留上游后来加的平台
    （截至 v0.2.5 共 12 个：anthropic / openai / gemini / antigravity / kiro / grok / adobe /
    kimi / zhipu / deepseek / minimax / opencode_go）。
+   2026-10-19 同步后并集还含 typesafe / command_code / cline / leonardo。
+   kiro 删除 adobe 的提交不采纳，adobe 继续留在并集里。
    漏掉任何一处都会静默不生效或直接编译失败，合完必须逐个回看：
    - `backend/internal/domain/constants.go`、`internal/service/domain_constants.go`
    - `internal/service/domain_constants.go` 的 `AllowedQuotaPlatforms`（多处已改为从它派生）
@@ -89,6 +98,7 @@ git merge kiro/main          # 第二段：只剩 kiro 自有增量
    `TestUserPlatformQuotaPlatformCheckFinalStateCoversAllPlatforms` 会取文件名序最后一个
    重建该约束的迁移并校验其平台列表，是这条链路唯一的自动护栏。
    当前终态由 kiro 的 `239_fork_platform_constraints_superset.sql` 提供（四张表、12 平台）。
+   其后的平台用新的前向迁移加，不要回头改 239。242/243 已应用，kiro 若删除它们也不接受。
 
 ## 代码位置
 
@@ -142,6 +152,10 @@ Kiro 走的是标准 Anthropic 入口（`/v1/messages`），由 **API Key 所属
 | `kiro_auto_sticky_enabled` | 是否启用自动会话粘性路由 |
 | `kiro_sticky_session_ttl_seconds` | 粘性绑定 TTL |
 | `kiro_endpoint_mode` | `q` = AWS Q（`q.{region}.amazonaws.com`）/ `krs` = Kiro Runtime Service（`runtime.us-east-1.kiro.dev`） |
+
+另有全局设置 `gateway_kiro_tokenizer`（`official` / `charclass` / `weighted`，
+空值与未知值归一成 `official`）。它只参与用量、计费、`/count_tokens` 与缓存模拟。
+发往上游的请求体和 `max_tokens` 截断仍用 official，避免计量算法改写真实请求。
 
 ## 其他 fork 私有能力（KIRO.md 长期漏记）
 
@@ -200,6 +214,14 @@ cookie 条件合并 token、网关与后台刷新共用 provider、出图准入�
 注意 `adobe` **不在** `channel_monitors` / `channel_monitor_request_templates` 的
 provider 枚举里（ent schema 与 kiro 的 239 号迁移一致），只在
 `user_platform_quotas` 与 `composite_model_routes` 的 CHECK 约束里。
+leonardo 同样不进渠道监控枚举。
+
+2026-10-15 kiro 用 `618fbe0a9` 删除了整个 Firefly 渠道，次日 `3c95f8f27` 加上
+Leonardo，只覆盖 `gpt-image-2` 与 `gpt-image-2.5-*`。Firefly 还有 gemini image、
+flux、imagen、gpt-4o-image、runway 等名字，Leonardo 盖不住。本 fork 因此把
+Leonardo 当成新增平台并进去，Adobe 的路由、计费分档、cookie 凭据与前端入口
+原样留下。出图按次价只在 `platform=adobe` 时套 Firefly 档，空平台和
+openai / gemini / leonardo 不得按模型名命中 Adobe 表。
 
 ## 已知约束与踩坑
 
@@ -267,9 +289,11 @@ go vet  -tags=e2e ./...
 因此可以共存，不要为了「看着整齐」重编号——重编号等于换文件名，
 会让已部署库重复执行同一段 DDL。
 
-新增的 Kiro 迁移：`135` / `145` / `151` / `152` / `153`×2 / `192` / `227` / `239`×2
+新增的 Kiro 迁移：`135` / `145` / `151` / `152` / `153`×2 / `192` / `227` / `239`×2 / `246`
 （`239_add_kiro_to_platform_checks.sql` 与 kiro 的 `239_fork_platform_constraints_superset.sql`，
 后者按文件名序在后、且是前者的超集，终态以后者为准）。
+`246_add_gateway_kiro_tokenizer.sql` 只插入设置 `gateway_kiro_tokenizer=official`
+（`ON CONFLICT DO NOTHING`），给计量分词器一个默认值。
 
 ### kiro 侧 lint 宽于本仓：每次同步都要预留一次 lint 收尾
 
