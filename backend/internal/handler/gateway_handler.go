@@ -1244,7 +1244,7 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		return
 	}
 
-	if len(availableModels) > 0 {
+	if len(availableModels) > 0 || (platform == service.PlatformOpenAI && availableModels != nil) {
 		writeModelsList(c, platform, availableModels)
 		return
 	}
@@ -1366,7 +1366,7 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 			continue
 		}
 		platformModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
-		if len(platformModels) == 0 {
+		if len(platformModels) == 0 && (platform != service.PlatformOpenAI || platformModels == nil) {
 			// CN 供应商没有静态默认模型列表（defaultModelIDsForPlatform 的
 			// default 分支是 Claude 列表），composite 下只暴露账号映射键。
 			if _, ok := schedulablePlatforms[platform]; ok && !service.IsMultiProtocolAPIKeyProvider(platform) {
@@ -1525,6 +1525,9 @@ func writeOpenAIModelsList(c *gin.Context, modelIDs []string) {
 // 的模型本就无法服务，因此只返回账号可用模型、不合并默认模型——否则从账号 mapping 中移除
 // 某模型后，仍会被默认模型兜底塞回，导致 /v1/models 与账号实际可服务集合不一致。
 func modelListingSource(platform string, availableModels, fallbackModels []string) []string {
+	if platform == service.PlatformOpenAI && availableModels != nil {
+		return availableModels
+	}
 	if len(availableModels) == 0 {
 		return fallbackModels
 	}
