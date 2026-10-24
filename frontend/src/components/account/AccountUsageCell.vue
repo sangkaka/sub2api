@@ -123,7 +123,7 @@
     </template>
 
     <!-- OpenAI Codex accounts: ticket status; usage querying remains OAuth-only. -->
-    <template v-else-if="account.platform === 'openai' && (account.type === 'oauth' || account.type === 'setup-token')">
+    <template v-else-if="account.platform === 'openai' && (account.type === 'oauth' || account.type === 'setup-token' || account.type === 'bps-oauth')">
       <div v-if="codexTurnTickets.length" class="mb-1 space-y-0.5">
         <div
           v-for="ticket in codexTurnTickets"
@@ -827,6 +827,79 @@
       <div v-else class="text-xs text-gray-400">-</div>
     </template>
 
+    <!-- Fish token 号：钱包已用进度 + 每日出图窗口。中转号没有 Fish 钱包。 -->
+    <template v-else-if="isFishUsageAccount">
+      <div v-if="loading" class="space-y-1.5">
+        <div class="h-4 w-24 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+        <div class="space-y-1">
+          <div class="h-1.5 w-32 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
+          <div class="h-1.5 w-28 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
+        </div>
+      </div>
+      <div v-else-if="error" class="text-xs text-red-500">
+        {{ error }}
+      </div>
+      <div v-else-if="fishUsageAvailable" class="space-y-2" data-testid="fish-usage">
+        <div v-if="fishPlanLabel" class="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span class="inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+            {{ fishPlanLabel }}
+          </span>
+        </div>
+
+        <div v-if="usageInfo?.fish_credits" class="space-y-1" data-testid="fish-credits">
+          <div class="flex items-baseline justify-between gap-2 text-[11px] text-gray-600 dark:text-gray-300">
+            <span class="font-medium tracking-[0.01em]">{{ t('admin.accounts.usageWindow.fishCredits') }}</span>
+            <span class="font-semibold tabular-nums text-gray-700 dark:text-gray-200">{{ formatKiroAmount(usageInfo.fish_credits.current_usage) }} / {{ formatKiroAmount(usageInfo.fish_credits.usage_limit) }}</span>
+          </div>
+          <div class="h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+            <div class="h-full rounded-full bg-amber-500 transition-all" :style="{ width: `${fishCreditPercent}%` }"></div>
+          </div>
+        </div>
+
+        <div v-if="usageInfo?.fish_daily" class="space-y-1" data-testid="fish-daily">
+          <div class="flex items-baseline justify-between gap-2 text-[11px] text-gray-600 dark:text-gray-300">
+            <span class="font-medium tracking-[0.01em]">{{ t('admin.accounts.usageWindow.fishDaily') }}</span>
+            <span class="font-semibold tabular-nums text-gray-700 dark:text-gray-200">{{ formatKiroAmount(usageInfo.fish_daily.current_usage) }} / {{ formatKiroAmount(usageInfo.fish_daily.usage_limit) }}</span>
+          </div>
+          <div class="h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+            <div class="h-full rounded-full bg-emerald-500 transition-all" :style="{ width: `${fishDailyPercent}%` }"></div>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-gray-500 dark:text-gray-400">
+          <span v-if="fishResetDisplay" class="inline-flex items-center gap-1">
+            <span class="text-gray-400 dark:text-gray-500">{{ t('admin.accounts.usageWindow.fishReset') }}</span>
+            <span class="font-medium tabular-nums text-gray-600 dark:text-gray-300">{{ fishResetDisplay }}</span>
+          </span>
+        </div>
+        <div class="flex items-center gap-1.5 mt-0.5">
+          <button
+            type="button"
+            class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[9px] font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors"
+            :disabled="activeQueryLoading"
+            @click="loadActiveUsage"
+          >
+            <svg
+              class="h-2.5 w-2.5"
+              :class="{ 'animate-spin': activeQueryLoading }"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              />
+            </svg>
+            {{ t('admin.accounts.usageWindow.activeQuery') }}
+          </button>
+        </div>
+      </div>
+      <div v-else class="text-xs text-gray-400">-</div>
+    </template>
+
     <!-- Other accounts: no usage window -->
     <template v-else>
       <div class="text-xs text-gray-400">-</div>
@@ -970,6 +1043,8 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   kiroUsageMeta: [meta: { plan_type?: string }]
+  leonardoUsageMeta: [meta: { plan_type?: string }]
+  fishUsageMeta: [meta: { plan_type?: string }]
   'account-updated': [account: Account]
   'usage-loaded': [usage: AccountUsageInfo]
 }>()
@@ -1022,12 +1097,16 @@ const showUsageWindows = computed(() => {
     return props.account.type === 'oauth' || isKiroDirectApiKeyAccount(props.account)
   }
   if (props.account.platform === 'adobe') return props.account.type === 'oauth'
+  // Fish token 号展示钱包与每日出图窗口；中转号按通用 API Key 展示今日统计。
+  if (props.account.platform === 'fish') {
+    return isFishUsageAccount.value
+  }
   // 多协议 API Key 供应商：apikey 账号也有滚动用量窗口（coding plan / 订阅）或余额，
   // 由 CNProviderQuotaCell / CNProviderBalanceCell 自行探测与展示。
   if (isMultiProtocolApiKeyPlatform(props.account.platform)) {
     return true
   }
-  return props.account.type === 'oauth' || props.account.type === 'setup-token'
+  return props.account.type === 'oauth' || props.account.type === 'setup-token' || props.account.type === 'bps-oauth'
 })
 
 const shouldFetchUsage = computed(() => {
@@ -1048,7 +1127,7 @@ const shouldFetchUsage = computed(() => {
     return props.account.type === 'oauth'
   }
   if (props.account.platform === 'openai') {
-    return props.account.type === 'oauth'
+    return props.account.type === 'oauth' || props.account.type === 'bps-oauth'
   }
   if (props.account.platform === 'adobe') {
     return props.account.type === 'oauth'
@@ -1057,6 +1136,9 @@ const shouldFetchUsage = computed(() => {
   // isLeonardoUsageAccount 同口径，否则积分模板永远拿不到数据。
   if (props.account.platform === 'leonardo') {
     return props.account.type === 'oauth'
+  }
+  if (props.account.platform === 'fish') {
+    return isFishUsageAccount.value
   }
   return false
 })
@@ -1089,7 +1171,7 @@ const geminiUsageAvailable = computed(() => {
 })
 
 const hasOpenAIUsageFallback = computed(() => {
-  if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return false
+  if (props.account.platform !== 'openai' || (props.account.type !== 'oauth' && props.account.type !== 'bps-oauth')) return false
   return !!usageInfo.value?.five_hour || !!usageInfo.value?.seven_day
 })
 
@@ -1708,15 +1790,22 @@ const isLeonardoUsageAccount = computed(() =>
   props.account.platform === 'leonardo' && props.account.type === 'oauth'
 )
 
+// Fish token 号（无 base_url）才有钱包与每日出图窗口。
+const isFishUsageAccount = computed(() => {
+  if (props.account.platform !== 'fish' || props.account.type !== 'apikey') return false
+  const baseURL = (props.account.credentials as { base_url?: unknown } | undefined)?.base_url
+  return typeof baseURL !== 'string' || baseURL.trim() === ''
+})
+
 const defaultUsageSource = computed<'passive' | 'active' | undefined>(() => {
-  if (isAnthropicOAuthOrSetupToken.value || isKiroUsageAccount.value || isAdobeUsageAccount.value || isLeonardoUsageAccount.value) {
+  if (isAnthropicOAuthOrSetupToken.value || isKiroUsageAccount.value || isAdobeUsageAccount.value || isLeonardoUsageAccount.value || isFishUsageAccount.value) {
     return 'passive'
   }
   return undefined
 })
 
 const manualRefreshUsageSource = computed<'passive' | 'active' | undefined>(() => {
-  if (isKiroUsageAccount.value || isAdobeUsageAccount.value || isLeonardoUsageAccount.value) {
+  if (isKiroUsageAccount.value || isAdobeUsageAccount.value || isLeonardoUsageAccount.value || isFishUsageAccount.value) {
     return 'active'
   }
   return defaultUsageSource.value
@@ -1782,6 +1871,54 @@ const syncKiroUsageMeta = (info?: AccountUsageInfo | null) => {
     ...(planType ? { plan_type: planType } : {})
   })
 }
+
+// Leonardo 套餐与 Kiro 同源（用量接口），优先展示名（如 Ultimate），回退原始 plan 码。
+const syncLeonardoUsageMeta = (info?: AccountUsageInfo | null) => {
+  if (!isLeonardoUsageAccount.value) return
+
+  const planType = (
+    info?.leonardo_plan_name ||
+    info?.leonardo_plan ||
+    ''
+  ).trim()
+
+  emit('leonardoUsageMeta', {
+    ...(planType ? { plan_type: planType } : {})
+  })
+}
+
+const syncFishUsageMeta = (info?: AccountUsageInfo | null) => {
+  if (!isFishUsageAccount.value) return
+  const planType = (info?.fish_plan || '').trim()
+  emit('fishUsageMeta', {
+    ...(planType ? { plan_type: planType } : {})
+  })
+}
+
+const syncUsagePlanMeta = (info?: AccountUsageInfo | null) => {
+  syncKiroUsageMeta(info)
+  syncLeonardoUsageMeta(info)
+  syncFishUsageMeta(info)
+}
+
+const fishUsageAvailable = computed(() =>
+  !!(usageInfo.value?.fish_credits || usageInfo.value?.fish_daily || usageInfo.value?.fish_plan)
+)
+const fishCreditPercent = computed(() => clampPercent(usageInfo.value?.fish_credits?.percentage_used))
+const fishDailyPercent = computed(() => clampPercent(usageInfo.value?.fish_daily?.percentage_used))
+const fishPlanLabel = computed(() => {
+  const plan = (usageInfo.value?.fish_plan || '').trim()
+  if (!plan) return ''
+  if (plan.toLowerCase() === 'free') return 'Free'
+  return plan
+})
+const fishResetDisplay = computed(() => {
+  const raw = usageInfo.value?.fish_reset_at
+  if (!raw) return ''
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) return ''
+  return parsed.toLocaleString()
+})
 
 const clampPercent = (value?: number | null) => {
   if (value == null || !Number.isFinite(value)) return 0
@@ -1926,7 +2063,7 @@ const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?
     const cached = _usageCache.get(props.account.id)
     if (cached && Date.now() - cached.ts < USAGE_CACHE_TTL) {
       usageInfo.value = cached.data
-      syncKiroUsageMeta(cached.data)
+      syncUsagePlanMeta(cached.data)
       loading.value = false
       return
     }
@@ -1942,7 +2079,7 @@ const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?
     const result = await enqueueUsageRequest(props.account, fetchFn)
     if (!unmounted.value) {
       usageInfo.value = result
-      syncKiroUsageMeta(result)
+      syncUsagePlanMeta(result)
       _usageCache.set(props.account.id, { data: result, ts: Date.now() })
     }
   } catch (e: any) {
@@ -2010,7 +2147,7 @@ const loadActiveUsage = async () => {
   try {
     const result = await adminAPI.accounts.getUsage(props.account.id, 'active', true)
     usageInfo.value = result
-    syncKiroUsageMeta(result)
+    syncUsagePlanMeta(result)
     _usageCache.set(props.account.id, { data: result, ts: Date.now() })
   } catch (e: any) {
     console.error('Failed to load active usage:', e)
@@ -2182,7 +2319,7 @@ watch(
 
 watch(openAIUsageRefreshKey, (nextKey, prevKey) => {
   if (!prevKey || nextKey === prevKey) return
-  if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return
+  if (props.account.platform !== 'openai' || (props.account.type !== 'oauth' && props.account.type !== 'bps-oauth')) return
 
   if (isBatchManaged.value) {
     requestParentBatchUsage({ force: true })

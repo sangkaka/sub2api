@@ -165,7 +165,7 @@ func TestNewGatewayServiceWiresCompositeModelOwnershipResolver(t *testing.T) {
 		nil, // adobeTokenProvider
 		nil,
 
-		nil,
+		nil, nil,
 		nil,
 		nil,
 		nil,
@@ -270,7 +270,7 @@ func TestCompositeGroupSchedulerHasAllCanonicalPlatformBuckets(t *testing.T) {
 		platforms = append(platforms, platform)
 	}
 	require.ElementsMatch(t,
-		[]string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformKiro, PlatformGrok, PlatformAdobe, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformTypeSafe, PlatformCommandCode, PlatformCline, PlatformLeonardo},
+		[]string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformKiro, PlatformGrok, PlatformAdobe, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformTypeSafe, PlatformCommandCode, PlatformCline, PlatformLeonardo, PlatformFish},
 		platforms,
 	)
 }
@@ -327,4 +327,21 @@ func TestResolveCompositeModelOwnershipDefaultMappingOnlyForSharedGeminiImage(t 
 	got, err = svc.resolveCompositeModelOwnership(context.Background(), 7, "gpt-image-2")
 	require.NoError(t, err)
 	require.Equal(t, CompositeModelOwnership{}, got)
+}
+
+// BPS-only accounts carry credentials only the OpenAI gateway can use, like
+// Codex OAuth accounts.
+func TestResolveCompositeModelOwnershipFlagsBPSOAuthClaimants(t *testing.T) {
+	groupID := int64(8)
+	repo := &compositeOwnershipAccountRepo{
+		accounts: []Account{
+			{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeBPSOAuth, Credentials: map[string]any{"model_mapping": map[string]any{"gpt-6-astra": "gpt-6-astra"}}},
+			{ID: 2, Platform: PlatformDeepseek, Type: AccountTypeAPIKey, Credentials: map[string]any{"model_mapping": map[string]any{"gpt-6-astra": "deepseek-v4-pro"}}},
+		},
+	}
+	svc := &GatewayService{accountRepo: repo}
+
+	ownership, err := svc.resolveCompositeModelOwnership(context.Background(), groupID, "gpt-6-astra")
+	require.NoError(t, err)
+	require.Equal(t, CompositeModelOwnership{Ambiguous: true, OpenAIGatewayOAuthClaimed: true}, ownership)
 }

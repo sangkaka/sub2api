@@ -44,6 +44,30 @@ kiro 未再改动的 Adobe 文件当成 deleted-by-theirs，会整渠道删掉�
 **两段合并的顺序不要改**：先 upstream 后 kiro，冲突被拆成两批，
 每批都能单独跑绿、单独回滚；反过来或一次合完会把两类语义揉在一个提交里。
 
+2026-10-24 同步到 v0.2.18 时补充的操作经验：
+
+- **逐个 `git cherry-pick` 时不要只看命令退出码**。循环里用
+  `git status --short | grep -c '^UU'` 判冲突是对的，但 cherry-pick 失败
+  （如工作区被其它会话占用）也会静默跳过——收尾必须数结果：
+  `git log <基线>..HEAD` 的条数要等于预期 pick 数，逐 subject 对账。
+  本次 72 个 pick 有 3 个（a059e598f / 044adb592 / a2e28f444）静默丢失，
+  全靠对账发现。
+- **共享工作区被其它会话的未提交文件占住时**，用独立 worktree 完成
+  剩余 pick 与验证，完事在主工作区 fast-forward，绝不 stash 别人的文件。
+- **pick 顺序内互相依赖的「终态」要提前知道**：excel_bps_enabled 开关在
+  9e8ead345 / 05e4bfef4 被移除，拣入以终态为准，不要在中间态上打补丁。
+- **冲突解决后必须逐个回看这批编译单元**：`go vet -tags=unit ./...`、
+  `go vet -tags=integration ./...`、前端 `vue-tsc` 与关键 spec。本次在
+  vet/typecheck 阶段抓到 10+ 处测试桩参数错位与 5 处拣入丢失（Kiro
+  region 选择器、Codex telemetry 开关与 292 门票面板、temp-unsched
+  scope 切换、`mergeKiroUpstreamIDs`、`adobeTestClients` keyed cache）。
+- **已知红测名单要每轮清一批**：本轮修掉了 AccountUsageCell Gemini
+  徽章、分组 i18n、Codex telemetry/ticket 面板、typesafe 迁移断言、
+  EditAccountModal testid；仍红的只剩 Adobe PlainTransport（本机代理
+  环境导致 resolveGuard 拒回环地址，CI 环境不红）与
+  TestOpenAICodexTicketGate_CompactRequestUsesForwardOutboundModel
+  （基线已红，与 compact 出站模型解析链有关，待查）。
+
 ### 冲突解决的既定规则
 
 这些规则是首次合并时定下的，重复同步时照做即可，不必每次重新判断：

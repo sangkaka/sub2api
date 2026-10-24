@@ -1338,12 +1338,14 @@ func (r *accountRepository) ListOAuthRefreshCandidatePage(ctx context.Context, o
 		query += `
 			AND status = 'active'`
 	}
+	// bps-oauth (OpenAI Excel/BPS-only) accounts hold OAuth credentials refreshed
+	// through the same OpenAI lifecycle as oauth accounts.
 	if options.IncludeSetupToken {
 		query += `
-			AND type IN ('oauth', 'setup-token')`
+			AND type IN ('oauth', 'setup-token', 'bps-oauth')`
 	} else {
 		query += `
-			AND type = 'oauth'`
+			AND type IN ('oauth', 'bps-oauth')`
 	}
 	args := []any{pq.Array(options.Platforms), options.AfterID, options.Limit}
 	if options.RequireRefreshToken {
@@ -1718,6 +1720,117 @@ func (r *accountRepository) InvalidateAdobeAccessTokenIfUnchanged(
 	}
 	r.syncSchedulerAccountSnapshotDetached(ctx, id)
 	return true, nil
+}
+
+// InvalidateAdobeExpressTokenIfUnchanged drops express_access_token /
+// express_expires_at from an Adobe OAuth account after the upstream rejected
+// that exact Express (paid-lane) token. Same CAS-on-token-value contract as
+// InvalidateAdobeAccessTokenIfUnchanged: a token a concurrent refresh already
+// replaced is left alone; the firefly credentials and every other field are
+// preserved, and the scheduler outbox insert shares the statement.
+func (r *accountRepository) InvalidateAdobeExpressTokenIfUnchanged(
+	ctx context.Context,
+	id int64,
+	expectedAccessToken string,
+) (bool, error) {
+	if r == nil || r.sql == nil {
+		return false, errors.New("account repository SQL executor is not configured")
+	}
+	if strings.TrimSpace(expectedAccessToken) == "" {
+		return false, errors.New("adobe express token invalidation requires the rejected access_token")
+	}
+	result, err := r.sql.ExecContext(ctx, `
+		WITH updated AS (
+		UPDATE accounts AS a
+		SET credentials = a.credentials - 'express_access_token' - 'express_expires_at',
+			updated_at = NOW()
+		WHERE a.id = $1
+			AND a.deleted_at IS NULL
+			AND a.platform = $2
+			AND a.type = $3
+			AND btrim(a.credentials ->> 'express_access_token') = $4
+		RETURNING a.id
+		)
+		INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
+		SELECT $5, updated.id, NULL, NULL FROM updated
+	`,
+		id,
+		service.PlatformAdobe,
+		service.AccountTypeOAuth,
+		strings.TrimSpace(expectedAccessToken),
+		service.SchedulerOutboxEventAccountChanged,
+	)
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if rowsAffected == 0 {
+		return false, nil
+	}
+	r.syncSchedulerAccountSnapshotDetached(ctx, id)
+	return true, nil
+}
+
+// SetAdobeExpressExhaustedUntil writes or clears the paid-lane exhaustion
+// window of an Adobe OAuth account. until != nil merges express_exhausted_until
+// into credentials (JSONB ||, other fields untouched); until == nil removes the
+// key, reviving the Express lane. Unlike the token CAS helpers this is not
+// guarded by a credential comparison: the marker is advisory state any writer
+// may refresh, and a stale window only costs one failed paid attempt.
+func (r *accountRepository) SetAdobeExpressExhaustedUntil(
+	ctx context.Context,
+	id int64,
+	until *time.Time,
+) error {
+	if r == nil || r.sql == nil {
+		return errors.New("account repository SQL executor is not configured")
+	}
+	var (
+		statement string
+		args      []any
+	)
+	if until != nil {
+		statement = `
+			WITH updated AS (
+			UPDATE accounts AS a
+			SET credentials = COALESCE(a.credentials, '{}'::jsonb)
+					|| jsonb_build_object('express_exhausted_until', $2::text),
+				updated_at = NOW()
+			WHERE a.id = $1
+				AND a.deleted_at IS NULL
+				AND a.platform = $3
+				AND a.type = $4
+			RETURNING a.id
+			)
+			INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
+			SELECT $5, updated.id, NULL, NULL FROM updated
+		`
+		args = []any{id, until.UTC().Format(time.RFC3339), service.PlatformAdobe, service.AccountTypeOAuth, service.SchedulerOutboxEventAccountChanged}
+	} else {
+		statement = `
+			WITH updated AS (
+			UPDATE accounts AS a
+			SET credentials = a.credentials - 'express_exhausted_until',
+				updated_at = NOW()
+			WHERE a.id = $1
+				AND a.deleted_at IS NULL
+				AND a.platform = $3
+				AND a.type = $4
+			RETURNING a.id
+			)
+			INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
+			SELECT $5, updated.id, NULL, NULL FROM updated
+		`
+		args = []any{id, service.PlatformAdobe, service.AccountTypeOAuth, service.SchedulerOutboxEventAccountChanged}
+	}
+	if _, err := r.sql.ExecContext(ctx, statement, args...); err != nil {
+		return err
+	}
+	r.syncSchedulerAccountSnapshotDetached(ctx, id)
+	return nil
 }
 
 // UpdateAdobeTokenIfCookieUnchanged merges a refreshed IMS token into an Adobe
@@ -3495,6 +3608,9 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			extraExpression += " || $" + itoa(idx) + "::jsonb"
 			args = append(args, payload)
 			idx++
+			if enabled, exists := updates.Extra["openai_excel_bps_cache_creation_as_input"].(bool); exists && !enabled {
+				extraExpression = "(" + extraExpression + ") - 'openai_excel_bps_cache_creation_as_input'"
+			}
 			if upstreamBillingProbeExplicitlyDisabled(updates.Extra) || upstreamBillingProbeSnapshotClearRequested(updates.Extra) {
 				extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe'"
 			}

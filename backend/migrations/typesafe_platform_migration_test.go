@@ -14,8 +14,11 @@ func TestTypeSafePlatformMigration(t *testing.T) {
 	sql := strings.Join(strings.Fields(string(content)), " ")
 	require.Contains(t, sql, "DROP CONSTRAINT IF EXISTS user_platform_quotas_platform_check")
 	require.Contains(t, sql, "DROP CONSTRAINT IF EXISTS composite_model_routes_target_platform_check")
+	// 本地 241 已按 migrations_runner 的 filename+SHA256 校验固化（30fde4454），
+	// 内容不含 kiro/adobe——242 起 CHECK 已移除、白名单由应用层平台清单校验，
+	// 终态由 expectedUserPlatformQuotaPlatforms（含 adobe/kiro/leonardo/fish）把守。
 	require.Contains(t, sql,
-		"CHECK (platform IN ('anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek', 'kiro', 'minimax', 'adobe', 'opencode_go', 'typesafe'))")
+		"CHECK (platform IN ('anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go', 'typesafe'))")
 	require.Contains(t, sql,
-		"CHECK (target_platform IN ('anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek', 'kiro', 'minimax', 'adobe', 'opencode_go', 'typesafe'))")
+		"CHECK (target_platform IN ('anthropic', 'openai', 'gemini', 'antigravity', 'grok', 'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go', 'typesafe'))")
 }

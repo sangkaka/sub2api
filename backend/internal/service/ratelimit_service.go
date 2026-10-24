@@ -474,7 +474,8 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			break
 		}
 		// OAuth 账号在 401 错误时临时不可调度（给 token 刷新窗口）；非 OAuth 账号保持原有 SetError 行为。
-		if authAccount.Type == AccountTypeOAuth {
+		// BPS-only（bps-oauth）账号持有同一套 OpenAI OAuth 凭据，按 OAuth 口径处理。
+		if authAccount.Type == AccountTypeOAuth || authAccount.IsBPSOAuth() {
 			// 1. 失效缓存
 			if s.tokenCacheInvalidator != nil {
 				if err := s.tokenCacheInvalidator.InvalidateToken(ctx, authAccount); err != nil {
@@ -2226,7 +2227,7 @@ func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID in
 			return nil, err
 		}
 		result.ClearedError = true
-		if options.InvalidateToken && s.tokenCacheInvalidator != nil && account.IsOAuth() {
+		if options.InvalidateToken && s.tokenCacheInvalidator != nil && (account.IsOAuth() || account.IsBPSOAuth()) {
 			if invalidateErr := s.tokenCacheInvalidator.InvalidateToken(ctx, account); invalidateErr != nil {
 				slog.Warn("recover_account_state_invalidate_token_failed", "account_id", accountID, "error", invalidateErr)
 			}
@@ -2667,7 +2668,7 @@ func unauthorizedRequiresCredentialHandling(account *Account, responseBody []byt
 	if account == nil {
 		return false
 	}
-	if account.Type == AccountTypeOAuth || account.IsShadow() {
+	if account.Type == AccountTypeOAuth || account.IsBPSOAuth() || account.IsShadow() {
 		return true
 	}
 	if account.Platform != PlatformOpenAI {

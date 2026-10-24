@@ -9,15 +9,26 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/adobe"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"go.uber.org/zap"
 )
 
 // adobeRefreshWindow 是 token 剩余寿命低于该值时触发刷新的阈值。
 // IMS token 通常只有约 24 小时，留 30 分钟足够覆盖一轮刷新周期。
 const adobeRefreshWindow = 30 * time.Minute
 
+// adobeExpressMintRetryDelay 是 express 铸币失败后的退避时长。
+// express 用同一份 cookie 铸、失败原因多为临时（IMS 抖动）或账号无 Express 权益；
+// 窗口内不再重试，窗口过后由 NeedsRefresh 再次驱动铸币。
+const adobeExpressMintRetryDelay = time.Hour
+
 // adobeTokenCredentialKeys 是一次 cookie 换 token 实际产出的字段；持久化时只写这些，
 // cookie / model_mapping 等由管理员维护的字段一律以 DB 当前值为准。
-var adobeTokenCredentialKeys = []string{"access_token", "expires_at", "_token_version"}
+// express_* 是积分优先账号顺带铸出的付费通道 token（以及铸币失败的退避标记）。
+var adobeTokenCredentialKeys = []string{
+	"access_token", "expires_at", "_token_version",
+	adobeExpressAccessTokenKey, adobeExpressExpiresAtKey, adobeExpressExhaustedUntilKey,
+}
 
 // AdobeTokenCredentialsRepository 是 Adobe 刷新结果的条件写入边界。
 //
@@ -115,31 +126,47 @@ func (r *AdobeTokenRefresher) CanRefresh(account *Account) bool {
 //
 // refreshWindow 由调度方传入，但 Adobe token 的寿命远短于多数平台，
 // 故取传入值与 adobeRefreshWindow 中较大的那个，避免窗口过小导致刷不及。
+//
+// 积分优先账号把 express 通道也纳入判断：express token 缺失或临期即需刷新
+// （Refresh 会同时铸两种 token）。express 处于耗尽/退避窗口时不算——窗口的
+// 语义就是「这段时间别再为 express 花刷新」。
 func (r *AdobeTokenRefresher) NeedsRefresh(account *Account, refreshWindow time.Duration) bool {
 	if !r.CanRefresh(account) {
 		return false
-	}
-	token := strings.TrimSpace(account.GetCredential("access_token"))
-	if token == "" {
-		return true
 	}
 	window := refreshWindow
 	if window < adobeRefreshWindow {
 		window = adobeRefreshWindow
 	}
-	return adobe.IsTokenExpired(token, window)
+	// 空 token 解不出 exp，IsTokenExpired 会把它当「未过期」；缺 token 必须视为要刷新。
+	if accessToken := strings.TrimSpace(account.GetCredential("access_token")); accessToken == "" ||
+		adobe.IsTokenExpired(accessToken, window) {
+		return true
+	}
+	if AdobeUseCredits(account) && AdobeExpressLaneAvailable(account) {
+		expressToken := strings.TrimSpace(account.GetCredential(adobeExpressAccessTokenKey))
+		if expressToken == "" || adobe.IsTokenExpired(expressToken, window) {
+			return true
+		}
+	}
+	return false
 }
 
 // Refresh 用 cookie 换新 token，返回保留了原有全部字段的 credentials。
+//
+// firefly（免费通道）铸币失败则整体失败；成功后若账号开启积分优先，再用同一份
+// cookie 铸 express（付费通道）token——express 失败不拖垮 firefly，只写一个
+// 短退避标记，期间出图继续走 firefly。
 func (r *AdobeTokenRefresher) Refresh(ctx context.Context, account *Account) (map[string]any, error) {
 	if !r.CanRefresh(account) {
 		return nil, errors.New("account is not a refreshable adobe account")
 	}
 
+	cookie := account.GetCredential("cookie")
 	client := r.clients.clientForAccount(account)
 	// 不查账号信息：刷新是热路径，省掉一次往返；账号信息在账号测试时另行获取。
 	result, err := client.RefreshAccessTokenFromCookie(
-		ctx, account.GetCredential("cookie"), adobe.RefreshOptions{SkipAccountFetch: true})
+		ctx, cookie, adobe.RefreshOptions{SkipAccountFetch: true})
 	if err != nil {
 		var authErr *adobe.AuthError
 		if errors.As(err, &authErr) {
@@ -151,10 +178,38 @@ func (r *AdobeTokenRefresher) Refresh(ctx context.Context, account *Account) (ma
 
 	// 只更新 token 字段：cookie 与 model_mapping 等都在原 credentials 里，
 	// 直接返回新 map 会把它们抹掉。
-	return MergeCredentials(account.Credentials, map[string]any{
+	fields := map[string]any{
 		"access_token": result.AccessToken,
 		"expires_at":   adobeTokenExpiryString(result),
-	}), nil
+	}
+	if AdobeUseCredits(account) {
+		r.mintExpressToken(ctx, account, cookie, fields)
+	}
+	return MergeCredentials(account.Credentials, fields), nil
+}
+
+// mintExpressToken 用与 firefly 相同的 cookie 铸 express 付费通道 token，写进 fields。
+// 失败时写退避标记而不是报错：firefly 结果已经可用，express 侧的失败不该让整次
+// 刷新作废（IMS 拒绝 express scope、临时故障等都只影响付费通道）。
+func (r *AdobeTokenRefresher) mintExpressToken(
+	ctx context.Context, account *Account, cookie string, fields map[string]any,
+) {
+	expressClient := r.clients.clientForAccountLane(account, AdobeLaneExpress)
+	result, err := expressClient.RefreshAccessTokenFromCookie(
+		ctx, cookie, adobe.RefreshOptions{SkipAccountFetch: true})
+	if err != nil {
+		logger.L().With(zap.String("component", "service.adobe")).Warn(
+			"adobe.express_mint_failed",
+			zap.Int64("account_id", account.ID),
+			zap.Duration("retry_after", adobeExpressMintRetryDelay),
+			zap.Error(err),
+		)
+		fields[adobeExpressExhaustedUntilKey] =
+			time.Now().Add(adobeExpressMintRetryDelay).UTC().Format(time.RFC3339)
+		return
+	}
+	fields[adobeExpressAccessTokenKey] = result.AccessToken
+	fields[adobeExpressExpiresAtKey] = adobeTokenExpiryString(result)
 }
 
 // adobeTokenExpiryString 取 token 的过期时刻（RFC3339）。

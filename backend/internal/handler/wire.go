@@ -119,6 +119,7 @@ func ProvideGatewayHandler(
 	userMsgQueueService *service.UserMessageQueueService,
 	adobeImageService *service.AdobeImageService,
 	leonardoImageService *service.LeonardoImageService,
+	fishImageService *service.FishImageService,
 	cfg *config.Config,
 	settingService *service.SettingService,
 	coordinator *securityaudit.Coordinator,
@@ -127,7 +128,7 @@ func ProvideGatewayHandler(
 	h := NewGatewayHandler(gatewayService, openAIGatewayService, geminiCompatService, antigravityGatewayService,
 		userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool,
 		errorPassthroughService, promptRuleService, contentModerationService, userMsgQueueService,
-		adobeImageService, leonardoImageService, cfg, settingService)
+		adobeImageService, leonardoImageService, fishImageService, cfg, settingService)
 	h.securityAuditCoordinator = coordinator
 	h.geminiCachedContentService = geminiCachedContentService
 	return h

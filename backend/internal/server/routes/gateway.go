@@ -90,6 +90,8 @@ func RegisterGatewayRoutes(
 			h.Gateway.AdobeImages(c)
 		case service.PlatformLeonardo:
 			h.Gateway.LeonardoImages(c)
+		case service.PlatformFish:
+			h.Gateway.FishImages(c)
 		default:
 			service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
 			c.JSON(http.StatusNotFound, gin.H{

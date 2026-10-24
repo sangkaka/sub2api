@@ -164,6 +164,7 @@ func TestAdobeFailoverInvalidatesRejectedToken(t *testing.T) {
 		repo := &adobeTokenInvalidationRecorder{}
 		svc := &GatewayService{accountRepo: repo}
 		failover := svc.AdobeFailover(context.Background(), 9, "tok-rejected",
+			AdobeLaneFirefly,
 			adobe.NewAuthError("Token invalid or expired", http.StatusUnauthorized))
 		require.NotNil(t, failover)
 		require.Equal(t, adobeFailureAuth, failover.Reason)
@@ -176,6 +177,7 @@ func TestAdobeFailoverInvalidatesRejectedToken(t *testing.T) {
 		repo := &adobeTokenInvalidationRecorder{}
 		svc := &GatewayService{accountRepo: repo}
 		require.NotNil(t, svc.AdobeFailover(context.Background(), 9, "tok",
+			AdobeLaneFirefly,
 			adobe.NewAuthError("Token invalid or expired", http.StatusForbidden)))
 		require.Zero(t, repo.calls)
 	})
@@ -184,6 +186,7 @@ func TestAdobeFailoverInvalidatesRejectedToken(t *testing.T) {
 		repo := &adobeTokenInvalidationRecorder{}
 		svc := &GatewayService{accountRepo: repo}
 		require.NotNil(t, svc.AdobeFailover(context.Background(), 9, "tok",
+			AdobeLaneFirefly,
 			adobe.NewUpstreamTemporaryError("boom", http.StatusBadGateway, adobe.ErrorTypeStatus)))
 		require.Zero(t, repo.calls)
 	})
@@ -192,6 +195,7 @@ func TestAdobeFailoverInvalidatesRejectedToken(t *testing.T) {
 		repo := &adobeTokenInvalidationRecorder{err: errors.New("db down")}
 		svc := &GatewayService{accountRepo: repo}
 		failover := svc.AdobeFailover(context.Background(), 9, "tok",
+			AdobeLaneFirefly,
 			adobe.NewAuthError("Token invalid or expired", http.StatusUnauthorized))
 		require.NotNil(t, failover)
 		require.Equal(t, NextAccountRetry, failover.NextAccountAction)

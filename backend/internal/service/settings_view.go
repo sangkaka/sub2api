@@ -266,6 +266,8 @@ type SystemSettings struct {
 	CodexCLIOnlyWhitelist                  string                            // codex_cli_only 全局白名单 JSON（[]AllowedClientEntry，AND allow）
 	CodexCLIOnlyAllowAppServerClients      bool                              // codex_cli_only App Server 开关：对未列名客户端开闸（默认 false）
 	CodexCLIOnlyEngineFingerprintSignals   string                            // codex_cli_only 引擎指纹门信号列表 JSON（[]EngineFingerprintSignal）
+	FishImageMaxCropPixels                 int                               // fish 原生号动态尺寸规划最大裁剪量（交付分辨率像素，默认 4；0=不裁剪）
+	FishImageMaxUpscaleFactor              float64                           // fish 原生号动态尺寸规划最大本地放大倍数（默认 2）
 
 	// Web Search Emulation
 	WebSearchEmulationEnabled bool // 是否启用 web search 模拟

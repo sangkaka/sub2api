@@ -150,6 +150,10 @@ func (s *AccountUsageService) fetchAndCacheAdobeUsage(ctx context.Context, accou
 //
 // 与 handler 层的 adobeQuotaCooldown(30 min) 是互补关系：这里主动、精准；
 // 那边被动、兜底。两条并存 = 即便本轮拉取失败或上游数据延迟，429 仍会摆号。
+//
+// 积分优先账号（extra.adobe_use_credits）例外：credits/balance 是付费（express）
+// 通道的余额，归零只停付费通道——免费（firefly）通道的生成权益与之独立，
+// 账号继续可调度。余额回补（available>0）时顺手恢复 express 通道。
 func (s *AccountUsageService) applyAdobeCreditsCooldown(
 	ctx context.Context,
 	account *Account,
@@ -159,12 +163,19 @@ func (s *AccountUsageService) applyAdobeCreditsCooldown(
 	if s == nil || s.accountRepo == nil || account == nil || bal == nil {
 		return
 	}
-	if bal.Available == nil || *bal.Available > 0 {
+	if bal.Available != nil && *bal.Available > 0 {
+		if exhausted := AdobeExpressExhaustedUntil(account); !exhausted.IsZero() {
+			setAdobeExpressExhausted(ctx, s.accountRepo, account.ID, nil)
+		}
 		return
 	}
 	until := time.Now().Add(adobeCreditsExhaustedFallback)
 	if resetAt != nil && resetAt.After(time.Now()) {
 		until = *resetAt
+	}
+	if AdobeUseCredits(account) {
+		setAdobeExpressExhausted(ctx, s.accountRepo, account.ID, &until)
+		return
 	}
 	_ = s.accountRepo.SetTempUnschedulable(ctx, account.ID, until, "adobe_credits_exhausted")
 }

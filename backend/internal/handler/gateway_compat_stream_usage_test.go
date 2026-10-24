@@ -99,11 +99,7 @@ func runCompatStreamUsageHandler(t *testing.T, endpoint, upstreamStream string, 
 		StatusCode: http.StatusOK, Body: pr,
 		Header: http.Header{"X-Request-Id": []string{"compat-stream-usage"}},
 	}}
-	gw := service.NewGatewayService(
-		nil, &fakeGroupRepo{group: group}, run.usageRepo, run.billingRepo, nil, nil, nil, nil, cfg,
-		snapshot, nil, service.NewBillingService(cfg, nil), nil, nil, nil, run.upstream,
-		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-	)
+	gw := service.NewGatewayService(nil, &fakeGroupRepo{group: group}, run.usageRepo, run.billingRepo, nil, nil, nil, nil, cfg, snapshot, nil, service.NewBillingService(cfg, nil), nil, nil, nil, run.upstream, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	h := &GatewayHandler{
 		gatewayService: gw, billingCacheService: billingCache, cfg: cfg, maxAccountSwitches: 1,
 		concurrencyHelper: NewConcurrencyHelper(service.NewConcurrencyService(&fakeConcurrencyCache{}), SSEPingFormatClaude, 0),

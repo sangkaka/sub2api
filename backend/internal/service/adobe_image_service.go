@@ -108,13 +108,18 @@ func (call *AdobeImageCall) inputImages(ctx context.Context, client *http.Client
 }
 
 // Generate 用指定账号完成一次出图（单次调用，不跨换号复用输入图）。
+// 免费通道（firefly）便捷入口：账号测试等不需要积分语义的调用方用这个。
 func (s *AdobeImageService) Generate(
 	ctx context.Context, account *Account, token string, req *OpenAIImagesRequest,
 ) (*AdobeImageResult, error) {
-	return s.GenerateCall(ctx, account, token, NewAdobeImageCall(req, ""))
+	return s.GenerateCall(ctx, account, token, AdobeLaneFirefly, NewAdobeImageCall(req, ""))
 }
 
-// GenerateCall 用指定账号完成一次出图。
+// GenerateCall 用指定账号在指定计费通道上完成一次出图。
+//
+// lane 决定发往上游的身份（Origin / x-api-key）：express 走 Adobe Express 付费
+// 通道（消耗积分），firefly 走免费额度。token 必须与 lane 匹配——由
+// AdobeTokenProvider.GetGenerationToken 一并产出。
 //
 // 错误一律是 adobe 包的类型化错误或本包的 *adobe.RequestError（终态），
 // 交由 classifyAdobeError 翻译成网关语义。
@@ -122,7 +127,7 @@ func (s *AdobeImageService) Generate(
 // ctx 取消只影响提交之前的阶段（取图、上传）：一旦提交，上游已开始消耗 credits，
 // 之后的轮询与下载脱离客户端连接，保证产物能交回 handler 记账。
 func (s *AdobeImageService) GenerateCall(
-	ctx context.Context, account *Account, token string, call *AdobeImageCall,
+	ctx context.Context, account *Account, token string, lane AdobeLane, call *AdobeImageCall,
 ) (*AdobeImageResult, error) {
 	var req *OpenAIImagesRequest
 	if call != nil {
@@ -153,7 +158,7 @@ func (s *AdobeImageService) GenerateCall(
 		return nil, err
 	}
 
-	client := s.clients.clientForAccount(account)
+	client := s.clients.clientForAccountLane(account, lane)
 	sourceImageIDs, err := s.uploadSourceImages(ctx, client, token, call)
 	if err != nil {
 		return nil, err

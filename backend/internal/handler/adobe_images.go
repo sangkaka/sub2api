@@ -389,6 +389,9 @@ func (h *GatewayHandler) runAdobeImagesFailover(
 	parsed := req.parsed
 	requestCtx := c.Request.Context()
 	failedAccountIDs := make(map[int64]struct{})
+	// freeLaneAccountIDs 记录本请求内 express（付费积分）通道已撞墙的账号：
+	// 它们的免费通道仍可用，重试时强制走 firefly，不等凭据快照刷新。
+	freeLaneAccountIDs := make(map[int64]struct{})
 	var lastFailover *service.UpstreamFailoverError
 	skipAdobeNative := false
 	// 仅 gpt-image 家族的 mask 才优先打 API key 中转；banana 等忽略 mask。
@@ -484,7 +487,8 @@ func (h *GatewayHandler) runAdobeImagesFailover(
 			return
 		}
 
-		token, _, err := h.gatewayService.GetAccessToken(requestCtx, account)
+		_, forcedFreeLane := freeLaneAccountIDs[account.ID]
+		token, lane, err := h.gatewayService.GetAdobeGenerationToken(requestCtx, account, forcedFreeLane)
 		if err != nil {
 			releaseAccount()
 			// 账号缺 token（刷新器还没跑到，或 cookie 已失效）：换下一个。
@@ -495,7 +499,7 @@ func (h *GatewayHandler) runAdobeImagesFailover(
 		}
 
 		// 提交之后的阶段在 service 内脱离客户端连接：拿到产物就一定记账，即便客户端已断开。
-		result, err := h.adobeImageService.GenerateCall(requestCtx, account, token, req.call)
+		result, err := h.adobeImageService.GenerateCall(requestCtx, account, token, lane, req.call)
 		releaseAccount()
 		if err == nil {
 			h.finishAdobeImagesSuccess(c, reqLog, apiKey, subject, subscription, account, result, req)
@@ -507,13 +511,25 @@ func (h *GatewayHandler) runAdobeImagesFailover(
 			return
 		}
 
-		failover := h.gatewayService.AdobeFailover(requestCtx, account.ID, token, err)
+		failover := h.gatewayService.AdobeFailover(requestCtx, account.ID, token, lane, err)
 		if failover == nil {
 			// 不属于 Adobe 上游语义（编解码错误等）：没有换号的依据，直接上抛。
 			reqLog.Error("adobe_images.generate_failed",
 				zap.Int64("account_id", account.ID), zap.Error(err))
 			adobeImagesError(c, http.StatusBadGateway, "api_error", "Upstream request failed")
 			return
+		}
+		if service.AdobeExpressRetryFreeLane(lane, failover) {
+			// 付费通道撞墙（积分耗尽 / 权益不足 / token 失效）：只停付费通道，
+			// 同一账号的免费通道立即可用——不算账号失败，重试时强制走 firefly。
+			freeLaneAccountIDs[account.ID] = struct{}{}
+			reqLog.Warn("adobe_images.express_lane_sidelined_retry_free",
+				zap.Int64("account_id", account.ID),
+				zap.String("reason", string(failover.Reason)),
+				zap.Int("attempts", attempts),
+			)
+			lastFailover = failover
+			continue
 		}
 		if service.IsAdobeContentRejected(failover) && !service.IsAdobeRelayAccount(account) {
 			skipAdobeNative = true

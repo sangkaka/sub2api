@@ -40,16 +40,17 @@ func newGatewayRecordUsageServiceForTest(usageRepo UsageLogRepository, userRepo 
 		nil,                         // adobeTokenProvider
 		nil,                         // leonardoTokenProvider
 		nil,                         // kiroCooldownStore
-		nil,                         // sessionLimitCache
-		nil,                         // rpmCache
-		nil,                         // digestStore
-		nil,                         // settingService
-		nil,                         // tlsFPProfileService
-		nil,                         // channelService
-		nil,                         // resolver
-		nil,                         // compositeResolver
-		nil,                         // balanceNotifyService
-		nil,                         // userPlatformQuotaRepo
+		nil,                         // kiroCacheEmulationRemote
+		nil, // sessionLimitCache
+		nil, // rpmCache
+		nil, // digestStore
+		nil, // settingService
+		nil, // tlsFPProfileService
+		nil, // channelService
+		nil, // resolver
+		nil, // compositeResolver
+		nil, // balanceNotifyService
+		nil, // userPlatformQuotaRepo
 	)
 }
 

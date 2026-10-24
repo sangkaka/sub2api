@@ -11,8 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/anthropictokenizer"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"golang.org/x/sync/singleflight"
@@ -75,6 +76,82 @@ var gatewayForwardingSF singleflight.Group
 const gatewayForwardingCacheTTL = 60 * time.Second
 const gatewayForwardingErrorTTL = 5 * time.Second
 const gatewayForwardingDBTimeout = 5 * time.Second
+
+// cachedFishImageFitLimits 缓存 fish 原生号动态尺寸规划阈值（进程内缓存，60s TTL）
+type cachedFishImageFitLimits struct {
+	limits    domain.FishFitLimits
+	expiresAt int64 // unix nano
+}
+
+var fishImageFitLimitsCache atomic.Value // *cachedFishImageFitLimits
+var fishImageFitLimitsSF singleflight.Group
+
+const fishImageFitLimitsCacheTTL = 60 * time.Second
+const fishImageFitLimitsErrorTTL = 5 * time.Second
+const fishImageFitLimitsDBTimeout = 5 * time.Second
+
+// parseFishImageFitLimitsValues 从持久化 settings map 解析 fish 动态尺寸
+// 阈值：缺失/非法回退默认（裁 4px / 放大 2.0），再经 Normalized 钳制。
+// parseSettings 与运行时缓存共用，保证两条读取路径口径一致。
+func parseFishImageFitLimitsValues(values map[string]string) domain.FishFitLimits {
+	limits := domain.DefaultFishFitLimits()
+	if raw, ok := values[SettingKeyFishImageMaxCropPixels]; ok && strings.TrimSpace(raw) != "" {
+		if v, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && v >= 0 {
+			limits.MaxCropPixels = v
+		}
+	}
+	if raw, ok := values[SettingKeyFishImageMaxUpscaleFactor]; ok && strings.TrimSpace(raw) != "" {
+		if v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64); err == nil && v > 0 {
+			limits.MaxUpscaleFactor = v
+		}
+	}
+	return limits.Normalized()
+}
+
+func (s *SettingService) getFishImageFitLimitsCached(ctx context.Context) domain.FishFitLimits {
+	defaults := domain.DefaultFishFitLimits()
+	if cached, ok := fishImageFitLimitsCache.Load().(*cachedFishImageFitLimits); ok && cached != nil {
+		if time.Now().UnixNano() < cached.expiresAt {
+			return cached.limits
+		}
+	}
+	val, _, _ := fishImageFitLimitsSF.Do("fish_image_fit_limits", func() (any, error) {
+		if cached, ok := fishImageFitLimitsCache.Load().(*cachedFishImageFitLimits); ok && cached != nil {
+			if time.Now().UnixNano() < cached.expiresAt {
+				return cached.limits, nil
+			}
+		}
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fishImageFitLimitsDBTimeout)
+		defer cancel()
+		values, err := s.settingRepo.GetMultiple(dbCtx, []string{
+			SettingKeyFishImageMaxCropPixels,
+			SettingKeyFishImageMaxUpscaleFactor,
+		})
+		if err != nil {
+			slog.Warn("failed to get fish image fit limits", "error", err)
+			fishImageFitLimitsCache.Store(&cachedFishImageFitLimits{
+				limits:    defaults,
+				expiresAt: time.Now().Add(fishImageFitLimitsErrorTTL).UnixNano(),
+			})
+			return defaults, nil
+		}
+		limits := parseFishImageFitLimitsValues(values)
+		fishImageFitLimitsCache.Store(&cachedFishImageFitLimits{
+			limits:    limits,
+			expiresAt: time.Now().Add(fishImageFitLimitsCacheTTL).UnixNano(),
+		})
+		return limits, nil
+	})
+	if limits, ok := val.(domain.FishFitLimits); ok {
+		return limits
+	}
+	return defaults
+}
+
+// GetFishImageFitLimits 返回 fish 原生号动态尺寸规划阈值（缺省裁 4px / 放大 2 倍）。
+func (s *SettingService) GetFishImageFitLimits(ctx context.Context) domain.FishFitLimits {
+	return s.getFishImageFitLimitsCached(ctx)
+}
 
 // cachedAccountSchedulingThresholds 缓存平台自动停调阈值（进程内缓存，60s TTL）
 type cachedAccountSchedulingThresholds struct {

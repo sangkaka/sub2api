@@ -12,8 +12,8 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/anthropictokenizer"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
@@ -869,6 +869,11 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	} else {
 		result.EnableFingerprintUnification = true // default: enabled (current behavior)
 	}
+
+	// fish 原生号动态尺寸规划阈值（缺省裁 4px / 放大 2 倍）
+	fishFit := parseFishImageFitLimitsValues(settings)
+	result.FishImageMaxCropPixels = fishFit.MaxCropPixels
+	result.FishImageMaxUpscaleFactor = fishFit.MaxUpscaleFactor
 	result.EnableMetadataPassthrough = settings[SettingKeyEnableMetadataPassthrough] == "true"
 	result.EnableCCHSigning = settings[SettingKeyEnableCCHSigning] == "true"
 	if v, ok := settings[SettingKeyEnableClaudeOAuthSystemPromptInjection]; ok && v != "" {

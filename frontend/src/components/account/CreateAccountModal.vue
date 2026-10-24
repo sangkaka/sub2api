@@ -70,9 +70,9 @@
       <!-- Platform Selection - Segmented Control Style -->
       <div>
         <label class="input-label">{{ t('admin.accounts.platform') }}</label>
-        <!-- 15 个平台：手机 3 列、sm 起 5 列的统一容器（grid 间隙即行间，不再单独留白），
-             Kiro / Adobe 固定在最后一行的最后两格 -->
-        <div class="mt-2 grid grid-cols-3 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-700 sm:grid-cols-5" data-tour="account-form-platform">
+        <!-- 16 个平台：手机 3 列、sm 起 4 列的统一容器（grid 间隙即行间，不再单独留白），
+             Kiro / Adobe / Leonardo / Fish 固定在最后一行 -->
+        <div class="mt-2 grid grid-cols-3 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-700 sm:grid-cols-4" data-tour="account-form-platform">
           <button
             type="button"
             @click="form.platform = 'anthropic'"
@@ -319,6 +319,20 @@
             <PlatformIcon platform="leonardo" size="sm" />
             Leonardo
           </button>
+          <button
+            type="button"
+            @click="form.platform = 'fish'"
+            :class="[
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
+              form.platform === 'fish'
+                ? 'bg-white text-cyan-600 shadow-sm dark:bg-dark-600 dark:text-cyan-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+            data-testid="platform-tab-fish"
+          >
+            <PlatformIcon platform="fish" size="sm" />
+            Fish Audio
+          </button>
         </div>
       </div>
 
@@ -455,13 +469,13 @@
       <!-- Account Type Selection (OpenAI) -->
       <div v-if="form.platform === 'openai'">
         <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
-        <div class="mt-2 grid grid-cols-2 gap-3" data-tour="account-form-type">
+        <div class="mt-2 grid grid-cols-3 gap-3" data-tour="account-form-type" data-testid="openai-account-type-grid">
           <button
             type="button"
-            @click="accountCategory = 'oauth-based'"
+            @click="accountCategory = 'oauth-based'; openaiBPSOAuth = false"
             :class="[
               'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'oauth-based'
+              accountCategory === 'oauth-based' && !openaiBPSOAuth
                 ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
                 : 'border-gray-200 hover:border-green-300 dark:border-dark-600 dark:hover:border-green-700'
             ]"
@@ -469,7 +483,7 @@
             <div
               :class="[
                 'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'oauth-based'
+                accountCategory === 'oauth-based' && !openaiBPSOAuth
                   ? 'bg-green-500 text-white'
                   : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
               ]"
@@ -484,7 +498,35 @@
 
           <button
             type="button"
-            @click="accountCategory = 'apikey'"
+            data-testid="openai-bps-oauth"
+            @click="accountCategory = 'oauth-based'; openaiBPSOAuth = true"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              isOpenAIBPSOAuth
+                ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+                : 'border-gray-200 hover:border-green-300 dark:border-dark-600 dark:hover:border-green-700'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                isOpenAIBPSOAuth
+                  ? 'bg-green-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <Icon name="link" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">BPS OAuth</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.oauth.openai.excelTypeDesc') }}</span>
+            </div>
+          </button>
+
+
+          <button
+            type="button"
+            @click="accountCategory = 'apikey'; openaiBPSOAuth = false"
             :class="[
               'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
               accountCategory === 'apikey'
@@ -1383,6 +1425,58 @@
           </button>
         </div>
       </div>
+      <!-- Fish：Oauth Token 直连 vs OpenAI 兼容中转。两种都落库 apikey，不走 OAuth 授权。 -->
+      <div v-if="form.platform === 'fish'">
+        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
+        <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <button
+            type="button"
+            @click="fishAccountMode = 'token'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              fishAccountMode === 'token'
+                ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20'
+                : 'border-gray-200 hover:border-amber-300 dark:border-dark-600 dark:hover:border-amber-700'
+            ]"
+            data-testid="fish-account-type-token"
+          >
+            <div :class="['flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', fishAccountMode === 'token' ? 'bg-amber-500 text-white' : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400']">
+              <Icon name="key" size="sm" />
+            </div>
+            <div class="min-w-0">
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">
+                {{ t('admin.accounts.types.fishOauthToken') }}
+              </span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.accounts.types.fishOauth') }}
+              </span>
+            </div>
+          </button>
+          <button
+            type="button"
+            @click="fishAccountMode = 'relay'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              fishAccountMode === 'relay'
+                ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/20'
+                : 'border-gray-200 hover:border-sky-300 dark:border-dark-600 dark:hover:border-sky-700'
+            ]"
+            data-testid="fish-account-type-relay"
+          >
+            <div :class="['flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', fishAccountMode === 'relay' ? 'bg-sky-500 text-white' : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400']">
+              <Icon name="cloud" size="sm" />
+            </div>
+            <div class="min-w-0">
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">
+                API Key + Base URL
+              </span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.accounts.types.fishApikeyRelay') }}
+              </span>
+            </div>
+          </button>
+        </div>
+      </div>
       <!-- Leonardo Cookie 账号的每积分单价：仅用于今日统计估算积分消耗金额，不参与计费 -->
       <div v-if="form.platform === 'leonardo' && accountCategory === 'oauth-based'" class="space-y-2">
         <label class="input-label">{{ t('admin.accounts.leonardoCreditUnitPriceUsd') }}</label>
@@ -1457,6 +1551,134 @@
             data-testid="leonardo-relay-api-key"
           />
           <p class="input-hint">{{ t('admin.accounts.leonardo.relayApiKeyHint') }}</p>
+        </div>
+      </div>
+      <!-- Fish Oauth Token：第一步直接粘贴会话 token，仍以 apikey 落库，不进第二步。 -->
+      <div v-if="form.platform === 'fish' && fishAccountMode === 'token'" class="space-y-4" data-testid="fish-token-fields">
+        <div>
+          <label class="input-label">{{ t('admin.accounts.fish.tokenLabel') }}</label>
+          <textarea
+            v-model="fishToken"
+            rows="3"
+            class="input font-mono text-xs"
+            placeholder="46471c2b-7cdc-4671-acc4-c0b2fd111817"
+            data-testid="fish-token-input"
+          ></textarea>
+          <p class="input-hint">{{ t('admin.accounts.fish.tokenHint') }}</p>
+        </div>
+        <div data-testid="fish-max-quality-section">
+          <label class="input-label">{{ t('admin.accounts.fishMaxQuality') }}</label>
+          <Select v-model="fishMaxQuality" :options="fishMaxQualityOptions" data-testid="fish-max-quality" />
+          <p class="input-hint">{{ t('admin.accounts.fishMaxQualityHint') }}</p>
+        </div>
+      </div>
+      <!-- Fish 中转：第一步直接填 Base URL + API Key，仍以 apikey 落库。 -->
+      <div v-if="form.platform === 'fish' && fishAccountMode === 'relay'" class="space-y-4" data-testid="fish-relay-fields">
+        <div>
+          <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
+          <input
+            v-model="apiKeyBaseUrl"
+            type="text"
+            required
+            class="input"
+            placeholder="https://api.openai.com"
+            data-testid="fish-relay-base-url"
+          />
+          <p class="input-hint">{{ t('admin.accounts.fish.relayBaseUrlHint') }}</p>
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
+          <input
+            v-model="apiKeyValue"
+            type="password"
+            required
+            class="input font-mono"
+            placeholder="sk-..."
+            data-testid="fish-relay-api-key"
+          />
+          <p class="input-hint">{{ t('admin.accounts.fish.relayApiKeyHint') }}</p>
+        </div>
+      </div>
+      <!-- Fish 模型白名单 / 映射。token 号和中转号都在第一步设置。 -->
+      <div
+        v-if="form.platform === 'fish'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        data-testid="fish-model-restriction-section"
+      >
+        <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
+        <div class="mb-4 flex gap-2">
+          <button
+            type="button"
+            @click="modelRestrictionMode = 'whitelist'"
+            :class="[
+              'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+              modelRestrictionMode === 'whitelist'
+                ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+            ]"
+          >
+            {{ t('admin.accounts.modelWhitelist') }}
+          </button>
+          <button
+            type="button"
+            @click="modelRestrictionMode = 'mapping'"
+            :class="[
+              'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+              modelRestrictionMode === 'mapping'
+                ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+            ]"
+          >
+            {{ t('admin.accounts.modelMapping') }}
+          </button>
+        </div>
+        <div v-if="modelRestrictionMode === 'whitelist'">
+          <ModelWhitelistSelector
+            v-model="allowedModels"
+            :model-mappings="modelMappings"
+            platform="fish"
+          />
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
+            <span v-if="allowedModels.length === 0">{{ t('admin.accounts.supportsAllModels') }}</span>
+          </p>
+        </div>
+        <div v-else>
+          <div class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
+            <p class="text-xs text-purple-700 dark:text-purple-400">{{ t('admin.accounts.mapRequestModels') }}</p>
+          </div>
+          <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
+            <div
+              v-for="(mapping, index) in modelMappings"
+              :key="'fish-' + getModelMappingKey(mapping)"
+              class="flex items-center gap-2"
+            >
+              <input v-model="mapping.from" type="text" class="input flex-1" :placeholder="t('admin.accounts.requestModel')" />
+              <span class="text-gray-400">→</span>
+              <input v-model="mapping.to" type="text" class="input flex-1" :placeholder="t('admin.accounts.actualModel')" />
+              <button type="button" @click="removeModelMapping(index)" class="rounded-lg p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
+                ×
+              </button>
+            </div>
+          </div>
+          <button
+            type="button"
+            @click="addModelMapping"
+            class="mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 dark:border-dark-500 dark:text-gray-400"
+          >
+            + {{ t('admin.accounts.addMapping') }}
+          </button>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="preset in presetMappings"
+              :key="'fish-' + preset.label"
+              type="button"
+              @click="addPresetMapping(preset.from, preset.to)"
+              :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
+            >
+              + {{ preset.label }}
+            </button>
+          </div>
         </div>
       </div>
       <div v-if="form.platform === 'kiro' && accountCategory === 'oauth-based'">
@@ -2260,8 +2482,8 @@
         </div>
       </div>
 
-      <!-- API Key input (only for apikey type, excluding Antigravity / Kiro / Adobe / Leonardo which have their own fields) -->
-      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity' && form.platform !== 'kiro' && form.platform !== 'adobe' && form.platform !== 'leonardo'" class="space-y-4">
+      <!-- API Key input (only for apikey type, excluding Antigravity / Kiro / Adobe / Leonardo / Fish which have their own fields) -->
+      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity' && form.platform !== 'kiro' && form.platform !== 'adobe' && form.platform !== 'leonardo' && form.platform !== 'fish'" class="space-y-4">
         <div v-if="!isMultiProtocolPlatform || apiProtocol !== 'adaptive'">
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
@@ -3219,6 +3441,7 @@
               v-model="allowedModels"
               :model-mappings="modelMappings"
               :platform="form.platform"
+              :available-models="isOpenAIBPSOAuth ? bpsCandidateModels : undefined"
               :sync-credentials="syncPreviewCredentials"
               @upstream-synced="upstreamModelsPreviewed = true"
             />
@@ -3300,6 +3523,7 @@
                 v-for="preset in presetMappings"
                 :key="'oauth-' + preset.label"
                 type="button"
+                data-testid="oauth-preset-mapping"
                 @click="addPresetMapping(preset.from, preset.to)"
                 :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
               >
@@ -3416,6 +3640,44 @@
                     class="input"
                     :placeholder="t('admin.accounts.tempUnschedulable.durationPlaceholder')"
                   />
+                </div>
+                <div class="sm:col-span-2">
+                  <label class="input-label">{{ t('admin.accounts.tempUnschedulable.scope') }}</label>
+                  <div
+                    class="grid grid-cols-1 gap-2 sm:grid-cols-2"
+                    role="radiogroup"
+                    :aria-label="t('admin.accounts.tempUnschedulable.scope')"
+                  >
+                    <button
+                      v-for="option in tempUnschedScopeOptions"
+                      :key="option.value"
+                      type="button"
+                      role="radio"
+                      :aria-checked="rule.scope === option.value"
+                      :data-testid="`temp-unsched-scope-${option.value}`"
+                      @click="rule.scope = option.value"
+                      :class="[
+                        'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+                        rule.scope === option.value
+                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                          : 'border-gray-200 hover:border-gray-400 dark:border-dark-600 dark:hover:border-gray-600'
+                      ]"
+                    >
+                      <span
+                        :class="[
+                          'flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2',
+                          rule.scope === option.value ? 'border-primary-500' : 'border-gray-300 dark:border-dark-500'
+                        ]"
+                      >
+                        <span v-if="rule.scope === option.value" class="h-1.5 w-1.5 rounded-full bg-primary-500" />
+                      </span>
+                      <span>
+                        <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ option.label }}</span>
+                        <span class="text-xs text-gray-500 dark:text-gray-400">{{ option.description }}</span>
+                      </span>
+                    </button>
+                  </div>
+                  <p class="input-hint">{{ t('admin.accounts.tempUnschedulable.scopeHint') }}</p>
                 </div>
                 <div class="sm:col-span-2">
                   <label class="input-label">{{ t('admin.accounts.tempUnschedulable.keywords') }}</label>
@@ -3922,7 +4184,7 @@
 
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
       <div
-        v-if="form.platform === 'openai'"
+        v-if="form.platform === 'openai' && !isOpenAIBPSOAuth"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between">
@@ -3983,7 +4245,7 @@
 
       <!-- OpenAI WS Mode（off/ctx_pool/passthrough/http_bridge/ws_bridge） -->
       <div
-        v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
+        v-if="form.platform === 'openai' && !isOpenAIBPSOAuth && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
         data-testid="create-openai-ws-mode"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
@@ -4102,7 +4364,7 @@
       </div>
 
       <div
-        v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
+        v-if="form.platform === 'openai' && accountCategory === 'oauth-based' && !isOpenAIBPSOAuth"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between">
@@ -4158,7 +4420,7 @@
 
       <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
       <div
-        v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
+        v-if="form.platform === 'openai' && accountCategory === 'oauth-based' && !isOpenAIBPSOAuth"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between gap-4">
@@ -4206,7 +4468,7 @@
 
       <!-- OpenAI Compact 能力配置 -->
       <div
-        v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
+        v-if="form.platform === 'openai' && !isOpenAIBPSOAuth && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4"
       >
         <div class="flex items-center justify-between">
@@ -4463,6 +4725,20 @@
           ></textarea>
           <p class="input-hint">{{ t('admin.accounts.adobe.arpHint') }}</p>
         </div>
+        <label
+          v-if="accountCategory === 'oauth-based'"
+          class="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-dark-600"
+          data-testid="adobe-use-credits-toggle"
+        >
+          <input
+            v-model="adobeUseCredits"
+            type="checkbox"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500"
+            data-testid="adobe-use-credits-checkbox"
+          />
+          <span class="text-gray-700 dark:text-gray-200">{{ t('admin.accounts.adobe.useCreditsLabel') }}</span>
+        </label>
+        <p v-if="accountCategory === 'oauth-based'" class="input-hint">{{ t('admin.accounts.adobe.useCreditsHint') }}</p>
       </div>
       <!-- Leonardo：长期凭据是 Better Auth cookie，JWT 由后台刷新器维护。 -->
       <div v-else-if="form.platform === 'leonardo'" class="space-y-4">
@@ -4519,6 +4795,7 @@
         v-else-if="form.platform !== 'adobe' && form.platform !== 'leonardo'"
         ref="oauthFlowRef"
         :add-method="form.platform === 'anthropic' ? addMethod : 'oauth'"
+        :excel-oauth="isOpenAIBPSOAuth"
         :auth-url="currentAuthUrl"
         :session-id="currentSessionId"
         :loading="currentOAuthLoading"
@@ -4528,12 +4805,12 @@
         :allow-multiple="form.platform === 'anthropic'"
         :show-cookie-option="form.platform === 'anthropic'"
         :show-refresh-token-option="form.platform === 'openai' || form.platform === 'antigravity' || form.platform === 'grok'"
-        :show-mobile-refresh-token-option="form.platform === 'openai'"
+        :show-mobile-refresh-token-option="form.platform === 'openai' && !isOpenAIBPSOAuth"
         :show-session-token-option="false"
         :show-access-token-option="false"
-        :show-codex-session-import-option="form.platform === 'openai'"
-        :show-agent-identity-option="form.platform === 'openai'"
-        :show-codex-pat-option="form.platform === 'openai'"
+        :show-codex-session-import-option="form.platform === 'openai' && !isOpenAIBPSOAuth"
+        :show-agent-identity-option="form.platform === 'openai' && !isOpenAIBPSOAuth"
+        :show-codex-pat-option="form.platform === 'openai' && !isOpenAIBPSOAuth"
         :show-sso-option="form.platform === 'grok'"
         :show-email-password-option="false"
         :show-manual-option="true"
@@ -4907,12 +5184,14 @@ import { useAppStore } from '@/stores/app'
 import {
   claudeModels,
   getPresetMappingsByPlatform,
+  getBPSPresetMappings,
   getModelsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
   fetchAntigravityDefaultMappings,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
+import { useBPSCandidateModels } from '@/composables/useBPSCandidateModels'
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
 import {
@@ -4920,7 +5199,7 @@ import {
   type AddMethod,
   type AuthInputMethod
 } from '@/composables/useAccountOAuth'
-import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
+import { useOpenAIOAuth, OPENAI_EXCEL_OAUTH_CLIENT_ID } from '@/composables/useOpenAIOAuth'
 import { useGeminiOAuth } from '@/composables/useGeminiOAuth'
 import { useAntigravityOAuth } from '@/composables/useAntigravityOAuth'
 import { useKiroOAuth } from '@/composables/useKiroOAuth'
@@ -4935,7 +5214,8 @@ import type {
   CodexSessionImportMessage,
   OpenAICompactMode,
   OpenAIResponsesMode,
-  OpenAIEndpointCapability
+  OpenAIEndpointCapability,
+  TempUnschedulableScope
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -4946,6 +5226,7 @@ import {
   defaultLeonardoImageLimits,
   type LeonardoImageLimitsForm
 } from '@/utils/leonardoImageLimits'
+import { FISH_MAX_QUALITY_VALUES, applyFishMaxQualityToExtra } from '@/utils/fishImageLimits'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
@@ -4998,7 +5279,7 @@ import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { extractAdobeAccessTokenFromCookieInput, extractAdobeAccessTokenInput, extractAdobeArpFromCookieInput, extractAdobeArpSessionInput, extractAdobeCookieInput } from '@/utils/adobeAccount'
 import { supportsAccountQuota } from '@/utils/accountQuota'
 import { getAccountExpiryTimestamp } from '@/components/account/accountExpiry'
-import { VERTEX_LOCATION_SELECT_OPTIONS, BEDROCK_REGION_SELECT_OPTIONS } from '@/constants/account'
+import { VERTEX_LOCATION_SELECT_OPTIONS, BEDROCK_REGION_SELECT_OPTIONS, DEFAULT_EXCEL_BPS_MODELS } from '@/constants/account'
 import { KIRO_REGION_SELECT_OPTIONS } from '@/constants/kiroRegions'
 import {
   OPENAI_WS_MODE_CTX_POOL,
@@ -5137,6 +5418,8 @@ const hideAccountLongContextBilling = computed(() => {
 // OAuth composables
 const oauth = useAccountOAuth() // For Anthropic OAuth
 const openaiOAuth = useOpenAIOAuth() // For OpenAI OAuth
+const openaiBPSOAuth = ref(false)
+const isOpenAIBPSOAuth = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && openaiBPSOAuth.value)
 const geminiOAuth = useGeminiOAuth() // For Gemini OAuth
 const antigravityOAuth = useAntigravityOAuth() // For Antigravity OAuth
 const kiroOAuth = useKiroOAuth() // For Kiro OAuth / IDC
@@ -5193,6 +5476,7 @@ interface TempUnschedRuleForm {
   keywords: string
   duration_minutes: number | null
   description: string
+  scope: TempUnschedulableScope
 }
 
 // State
@@ -5211,6 +5495,9 @@ const kiroAPIRegion = ref('us-east-1')
 const adobeCookie = ref('')
 const adobeAccessToken = ref('')
 const adobeArpSession = ref('')
+// 积分优先：出图先走付费 generative credits，耗尽后自动回退免费额度（后端语义见
+// extra.adobe_use_credits）。
+const adobeUseCredits = ref(false)
 const upstreamBillingAutoProbeEnabled = ref(true)
 
 watch(adobeCookie, (value) => {
@@ -5458,6 +5745,11 @@ const modelMappings = ref<ModelMapping[]>([])
 const openAICompactModelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
+// BPS OAuth 账号的白名单候选只列 BPS 模型
+const { candidates: bpsCandidateModels, reset: resetBPSCandidateModels } = useBPSCandidateModels(allowedModels)
+// 白名单模式的预填：BPS OAuth 用默认 BPS 模型，其余按平台目录。
+const defaultWhitelistModels = () =>
+  isOpenAIBPSOAuth.value ? [...DEFAULT_EXCEL_BPS_MODELS] : [...getModelsByPlatform(form.platform)]
 
 // Adobe 用通用的「模型限制」区块（白名单 / 映射双模式），默认给空白名单。
 //
@@ -5621,6 +5913,11 @@ const leonardoMaxQualityOptions = computed(() => [
   { value: '', label: t('admin.accounts.leonardoMaxQualityUnlimited') },
   ...LEONARDO_MAX_QUALITY_VALUES.map((value) => ({ value, label: value }))
 ])
+const fishMaxQuality = ref('')
+const fishMaxQualityOptions = computed(() => [
+  { value: '', label: t('admin.accounts.fishMaxQualityUnlimited') },
+  ...FISH_MAX_QUALITY_VALUES.map((value) => ({ value, label: value }))
+])
 const kiroUpstreamIDs = ref<Record<string, string>>({})
 const mergeKiroUpstreamIDs = (ids: Record<string, string>) => {
   kiroUpstreamIDs.value = { ...kiroUpstreamIDs.value, ...ids }
@@ -5642,6 +5939,36 @@ const kiroCreateSyncCredentials = computed(() => {
 })
 // Leonardo Cookie 建号：cookie 必填；空白名单 = 不下发 model_mapping，
 // 由后端回落到平台默认映射。
+// Fish 建号：token 原生号（{token}）或 OpenAI 兼容中转号（{base_url, api_key}）。
+const fishAccountMode = ref<'token' | 'relay'>('token')
+const fishToken = ref('')
+const handleFishCreate = async () => {
+  if (!form.name.trim()) {
+    appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+    return
+  }
+  const token = fishToken.value.trim()
+  if (!token) {
+    appStore.showError(t('admin.accounts.fish.tokenRequired'))
+    return
+  }
+  const credentials: Record<string, unknown> = { api_key: token }
+  const modelMapping = buildModelMappingObject(
+    modelRestrictionMode.value,
+    allowedModels.value,
+    modelMappings.value
+  )
+  if (modelMapping) {
+    credentials.model_mapping = modelMapping
+  }
+  await createAccountAndFinish(
+    'fish',
+    'apikey' as AccountType,
+    credentials,
+    applyFishMaxQualityToExtra({}, fishMaxQuality.value)
+  )
+}
+
 const handleLeonardoCreate = async () => {
   if (!form.name.trim()) {
     appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
@@ -5896,8 +6223,9 @@ const openAIWSModeHintKey = computed(() =>
   resolveOpenAIWSModeHintKey(openaiResponsesWebSocketV2Mode.value)
 )
 
+// Passthrough is a Codex-only option: BPS OAuth always applies the model mapping.
 const isOpenAIModelRestrictionDisabled = computed(() =>
-  form.platform === 'openai' && openaiPassthroughEnabled.value
+  form.platform === 'openai' && !isOpenAIBPSOAuth.value && openaiPassthroughEnabled.value
 )
 
 const mixedChannelWarningMessageText = computed(() => {
@@ -5923,7 +6251,22 @@ const geminiHelpLinks = {
 }
 
 // Computed: current preset mappings based on platform
-const presetMappings = computed(() => getPresetMappingsByPlatform(form.platform))
+const presetMappings = computed(() =>
+  isOpenAIBPSOAuth.value ? getBPSPresetMappings() : getPresetMappingsByPlatform(form.platform)
+)
+const tempUnschedScopeOptions = computed<Array<{ value: TempUnschedulableScope; label: string; description: string }>>(() => [
+  {
+    value: 'model',
+    label: t('admin.accounts.tempUnschedulable.scopeModel'),
+    description: t('admin.accounts.tempUnschedulable.scopeModelDesc')
+  },
+  {
+    value: 'account',
+    label: t('admin.accounts.tempUnschedulable.scopeAccount'),
+    description: t('admin.accounts.tempUnschedulable.scopeAccountDesc')
+  }
+])
+
 const tempUnschedPresets = computed(() => [
   {
     label: t('admin.accounts.tempUnschedulable.presets.overloadLabel'),
@@ -5931,7 +6274,8 @@ const tempUnschedPresets = computed(() => [
       error_code: 529,
       keywords: 'overloaded, too many',
       duration_minutes: 60,
-      description: t('admin.accounts.tempUnschedulable.presets.overloadDesc')
+      description: t('admin.accounts.tempUnschedulable.presets.overloadDesc'),
+      scope: 'model' as const
     }
   },
   {
@@ -5940,7 +6284,8 @@ const tempUnschedPresets = computed(() => [
       error_code: 429,
       keywords: 'rate limit, too many requests',
       duration_minutes: 10,
-      description: t('admin.accounts.tempUnschedulable.presets.rateLimitDesc')
+      description: t('admin.accounts.tempUnschedulable.presets.rateLimitDesc'),
+      scope: 'model' as const
     }
   },
   {
@@ -5949,7 +6294,8 @@ const tempUnschedPresets = computed(() => [
       error_code: 503,
       keywords: 'unavailable, maintenance',
       duration_minutes: 30,
-      description: t('admin.accounts.tempUnschedulable.presets.unavailableDesc')
+      description: t('admin.accounts.tempUnschedulable.presets.unavailableDesc'),
+      scope: 'model' as const
     }
   }
 ])
@@ -5973,7 +6319,7 @@ const form = reactive({
 const isOAuthFlow = computed(() => {
   // Leonardo 的长期凭据是浏览器 cookie，没有授权重定向环节（两步建号由
   // needsCredentialStep 单独处理）。
-  if (form.platform === 'leonardo') {
+  if (form.platform === 'leonardo' || form.platform === 'fish') {
     return false
   }
   // Antigravity upstream 类型不需要 OAuth 流程
@@ -5992,10 +6338,11 @@ const isOAuthFlow = computed(() => {
 })
 
 // Adobe / Leonardo 与 OAuth 一样分两步：第一步基础信息，第二步再填凭据；
-// 中转（apikey-relay）单步直接建号。
+// 中转（apikey-relay）单步直接建号。Fish 的 token 和中转都在第一步直接建号。
 const needsCredentialStep = computed(() =>
   isOAuthFlow.value
   || ((form.platform === 'adobe' || form.platform === 'leonardo') && accountCategory.value !== 'apikey-relay')
+
 )
 
 const isKiroImportMode = computed(() => form.platform === 'kiro' && kiroAccountType.value === 'import')
@@ -6044,7 +6391,7 @@ watch(
       // Modal opened - fill related models
       // Leonardo 留空白名单：不下发 model_mapping = 后端回落默认映射。
       if (form.platform === 'leonardo') return
-      allowedModels.value = [...getModelsByPlatform(form.platform)]
+      allowedModels.value = defaultWhitelistModels()
       // Antigravity: 默认使用映射模式并填充默认映射
       if (form.platform === 'antigravity') {
         antigravityModelRestrictionMode.value = 'mapping'
@@ -6072,7 +6419,7 @@ watch(
 
 // Sync form.type based on accountCategory, addMethod, and platform-specific type
 watch(
-  [accountCategory, addMethod, antigravityAccountType, () => form.platform],
+  [accountCategory, addMethod, antigravityAccountType, () => form.platform, openaiBPSOAuth],
   ([category, method, agType]) => {
     // Antigravity upstream 类型（实际创建为 apikey）
     if (form.platform === 'antigravity' && agType === 'upstream') {
@@ -6089,6 +6436,11 @@ watch(
       form.type = category === 'apikey-relay' ? 'apikey' : 'oauth'
       return
     }
+    // Fish 的两种卡片都是 apikey：token 凭据或 base_url + api_key。
+    if (form.platform === 'fish') {
+      form.type = 'apikey'
+      return
+    }
     // Bedrock 类型
     if (form.platform === 'anthropic' && category === 'bedrock') {
       form.type = 'bedrock' as AccountType
@@ -6097,7 +6449,10 @@ watch(
     if ((form.platform === 'gemini' || form.platform === 'anthropic') && category === 'service_account') {
       form.type = 'service_account' as AccountType
     } else if (category === 'oauth-based') {
-      form.type = form.platform === 'anthropic' ? method as AccountType : 'oauth'
+      // BPS OAuth（官方 Excel 授权）是独立的 BPS-only 账号类型
+      form.type = form.platform === 'anthropic'
+        ? method as AccountType
+        : form.platform === 'openai' && openaiBPSOAuth.value ? 'bps-oauth' : 'oauth'
     } else {
       form.type = 'apikey'
     }
@@ -6129,7 +6484,7 @@ watch(
                 ? 'https://api.x.ai/v1'
                 : newPlatform === 'typesafe'
                   ? 'https://api.typesafe.ai'
-                  : newPlatform === 'leonardo'
+                  : newPlatform === 'leonardo' || newPlatform === 'fish'
                     ? ''
                     : 'https://api.anthropic.com'
     }
@@ -6216,6 +6571,7 @@ watch(
       interceptWarmupRequests.value = false
     }
     if (newPlatform !== 'openai') {
+      openaiBPSOAuth.value = false
       openaiPassthroughEnabled.value = false
       openaiFlattenNamespacesEnabled.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
@@ -6240,6 +6596,7 @@ watch(
     // Reset OAuth states
     oauth.resetState()
     openaiOAuth.resetState()
+    openaiBPSOAuth.value = false
 
     geminiOAuth.resetState()
     antigravityOAuth.resetState()
@@ -6305,20 +6662,35 @@ const handleSelectGeminiOAuthType = (oauthType: 'code_assist' | 'google_one' | '
   geminiOAuthType.value = oauthType
 }
 
-// Auto-fill related models when switching to whitelist mode or changing platform
+// 切换白名单模式或平台时，按平台目录预填。Fish 留空：空映射由后端回落默认模型，
+// 不把上一个平台的模型带过来。
 watch(
   [modelRestrictionMode, () => form.platform],
-  ([newMode]) => {
+  ([newMode, platform]) => {
+    if (platform === 'fish') {
+      allowedModels.value = []
+      return
+    }
     // Adobe 例外：预勾全部对外名会把历史别名 gpt-image / gpt-image-1 /
     // gpt-image-1-mini / gpt-image-2.5-prism / nano-banana* 挡在门外——它们不在用户面清单里
     // （Step 8 刻意的），却是老客户端还在发的名字。留空 = 不下发 model_mapping
     // = 后端回落到 DefaultAdobeModelMapping，历史别名都还在。
     if (form.platform === 'adobe') return
     if (newMode === 'whitelist') {
-      allowedModels.value = [...getModelsByPlatform(form.platform)]
+      allowedModels.value = defaultWhitelistModels()
     }
   }
 )
+
+// 切到 BPS OAuth 时白名单预填默认 BPS 模型（映射模式不读白名单，一并替换以免带入原生模型）；
+// 切回其他 OpenAI 类型时恢复平台默认白名单。
+watch(isOpenAIBPSOAuth, (bps) => {
+  if (form.platform !== 'openai') return
+  if (bps || modelRestrictionMode.value === 'whitelist') {
+    allowedModels.value = defaultWhitelistModels()
+  }
+  resetBPSCandidateModels()
+})
 
 watch(
   [antigravityModelRestrictionMode, () => form.platform],
@@ -6446,7 +6818,8 @@ const addTempUnschedRule = (preset?: TempUnschedRuleForm) => {
     error_code: null,
     keywords: '',
     duration_minutes: 30,
-    description: ''
+    description: '',
+    scope: 'model'
   })
 }
 
@@ -6651,6 +7024,9 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 
 // Methods
 const resetForm = () => {
+  fishAccountMode.value = 'token'
+  fishToken.value = ''
+  fishMaxQuality.value = ''
   leonardoCookie.value = ''
   leonardoCreditUnitPriceUsd.value = 0
   leonardoImageLimits.value = defaultLeonardoImageLimits()
@@ -6680,6 +7056,7 @@ const resetForm = () => {
   adobeCookie.value = ''
   adobeAccessToken.value = ''
   adobeArpSession.value = ''
+  adobeUseCredits.value = false
   upstreamRequestIdHeader.value = ''
   upstreamBillingAutoProbeEnabled.value = true
   editQuotaLimit.value = null
@@ -6775,6 +7152,7 @@ const resetForm = () => {
   geminiTierAIStudio.value = 'aistudio_free'
   oauth.resetState()
   openaiOAuth.resetState()
+  openaiBPSOAuth.value = false
   geminiOAuth.resetState()
   antigravityOAuth.resetState()
   kiroOAuth.resetState()
@@ -6797,6 +7175,12 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   }
 
   const extra: Record<string, unknown> = { ...(base || {}) }
+  if (isOpenAIBPSOAuth.value) {
+    // BPS-only 账号只走 BPS：只写计费开关（可服务的模型以通用模型限制为准），
+    // Codex 专属设置（WS、透传、CLI only、指纹、compact 等）一律不落库。
+    extra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
+    return extra
+  }
   if (accountCategory.value === 'oauth-based') {
     extra.openai_oauth_responses_websockets_v2_mode = openaiOAuthResponsesWebSocketV2Mode.value
     extra.openai_oauth_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiOAuthResponsesWebSocketV2Mode.value)
@@ -7047,6 +7431,43 @@ const handleSubmit = async () => {
     }
 
     await createAccountAndFinish('leonardo', 'apikey', credentials)
+    return
+  }
+
+  // Fish 两种账号都在第一步创建，用凭据区分：token，或 base_url + api_key。
+  if (form.platform === 'fish' && fishAccountMode.value === 'token') {
+    await handleFishCreate()
+    return
+  }
+
+  if (form.platform === 'fish' && fishAccountMode.value === 'relay') {
+    if (!form.name.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+      return
+    }
+    if (!apiKeyBaseUrl.value.trim()) {
+      appStore.showError(t('admin.accounts.upstream.pleaseEnterBaseUrl'))
+      return
+    }
+    if (!apiKeyValue.value.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
+      return
+    }
+
+    const credentials: Record<string, unknown> = {
+      api_key: apiKeyValue.value.trim(),
+      base_url: apiKeyBaseUrl.value.trim()
+    }
+    const modelMapping = buildModelMappingObject(
+      modelRestrictionMode.value,
+      allowedModels.value,
+      modelMappings.value
+    )
+    if (modelMapping) {
+      credentials.model_mapping = modelMapping
+    }
+
+    await createAccountAndFinish('fish', 'apikey', credentials)
     return
   }
 
@@ -7440,9 +7861,21 @@ const handleAdobeCreate = async () => {
     credentials.model_mapping = modelMapping
   }
 
-  await createAccountAndFinish('adobe', 'oauth' as AccountType, credentials)
+  // 积分优先是账号级开关：off 不落键，保持 extra 干净（与后端缺省=仅免费一致）。
+  const extra: Record<string, unknown> = {}
+  if (adobeUseCredits.value) {
+    extra.adobe_use_credits = true
+  }
+
+  await createAccountAndFinish(
+    'adobe',
+    'oauth' as AccountType,
+    credentials,
+    Object.keys(extra).length > 0 ? extra : undefined
+  )
 }
 
+// Going back keeps the chosen account type (BPS OAuth included) and its models.
 const goBackToBasicInfo = () => {
   step.value = 1
   oauth.resetState()
@@ -7456,7 +7889,7 @@ const goBackToBasicInfo = () => {
 
 const handleGenerateUrl = async () => {
   if (form.platform === 'openai') {
-    await openaiOAuth.generateAuthUrl(form.proxy_id)
+    await openaiOAuth.generateAuthUrl(form.proxy_id, undefined, isOpenAIBPSOAuth.value ? 'excel' : 'codex')
   } else if (form.platform === 'gemini') {
     await geminiOAuth.generateAuthUrl(
       form.proxy_id,
@@ -7899,6 +8332,9 @@ const handleOpenAIExchange = async (authCode: string) => {
     )
     if (!tokenInfo) return
 
+    if (isOpenAIBPSOAuth.value && tokenInfo.client_id !== OPENAI_EXCEL_OAUTH_CLIENT_ID) {
+      throw new Error(t('admin.accounts.oauth.openai.excelSessionMismatch'))
+    }
     const credentials = oauthClient.buildCredentials(tokenInfo)
     const oauthExtra = oauthClient.buildExtraInfo(tokenInfo) as Record<string, unknown> | undefined
     const extra = buildOpenAIExtra(oauthExtra)
@@ -7911,7 +8347,8 @@ const handleOpenAIExchange = async (authCode: string) => {
         credentials.model_mapping = modelMapping
       }
     }
-    if (shouldCreateOpenAI) {
+    // Compact is Codex-only; BPS OAuth hides the setting, so never store it.
+    if (shouldCreateOpenAI && !isOpenAIBPSOAuth.value) {
       const compactModelMapping = buildOpenAICompactModelMapping()
       if (compactModelMapping) {
         credentials.compact_model_mapping = compactModelMapping
@@ -7928,7 +8365,7 @@ const handleOpenAIExchange = async (authCode: string) => {
         name: form.name,
         notes: form.notes,
         platform: 'openai',
-        type: 'oauth',
+        type: isOpenAIBPSOAuth.value ? 'bps-oauth' : 'oauth',
         credentials,
         extra: withUpstreamRequestIdHeader(extra),
         proxy_id: form.proxy_id,
@@ -8193,7 +8630,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             credentials.model_mapping = modelMapping
           }
         }
-        if (shouldCreateOpenAI) {
+        if (shouldCreateOpenAI && !isOpenAIBPSOAuth.value) {
           const compactModelMapping = buildOpenAICompactModelMapping()
           if (compactModelMapping) {
             credentials.compact_model_mapping = compactModelMapping
@@ -8209,7 +8646,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             name: accountName,
             notes: form.notes,
             platform: 'openai',
-            type: 'oauth',
+            type: isOpenAIBPSOAuth.value ? 'bps-oauth' : 'oauth',
             credentials,
             extra: withUpstreamRequestIdHeader(extra),
             proxy_id: form.proxy_id,
@@ -8256,7 +8693,9 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
 }
 
 // 手动输入 RT（Codex CLI client_id，默认）
-const handleOpenAIValidateRT = (rt: string) => handleOpenAIBatchRT(rt)
+// BPS OAuth 账号的 RT 属于官方 Excel 客户端，必须用 Excel client_id 兑换；
+// 用 Codex client_id 校验会失败，或把 Codex RT 建成带 BPS 标记的账号。
+const handleOpenAIValidateRT = (rt: string) => handleOpenAIBatchRT(rt, isOpenAIBPSOAuth.value ? OPENAI_EXCEL_OAUTH_CLIENT_ID : undefined)
 
 // 手动输入 Mobile RT
 const handleOpenAIValidateMobileRT = (rt: string) => handleOpenAIBatchRT(rt, OPENAI_MOBILE_RT_CLIENT_ID)

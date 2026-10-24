@@ -176,17 +176,70 @@ func applyAdobeCooldown(ctx context.Context, repo AccountRepository, accountID i
 // 这是 handler 层的唯一入口：分类结果（adobeFailure）刻意不导出，避免把
 // 「怎么处置」的判断散到 handler 里各写一遍。
 // 返回 nil 表示该错误不属于 Adobe 上游语义（如 ctx 取消），调用方应原样上抛。
-// token 是本次请求发给上游的 access_token，用于在上游明确拒绝时按值清掉它。
-func (s *GatewayService) AdobeFailover(ctx context.Context, accountID int64, token string, err error) *UpstreamFailoverError {
+// token 是本次请求发给上游的 access_token，用于在上游明确拒绝时按值清掉它；
+// lane 是本次使用的计费通道——express（付费积分）通道上的配额耗尽 / 权益不足 /
+// token 失效只停付费通道（写耗尽窗口、失效 express token），账号的免费通道照常
+// 可用，调用方应让同一账号立即改走 firefly 重试（见 AdobeExpressRetryFreeLane）。
+func (s *GatewayService) AdobeFailover(ctx context.Context, accountID int64, token string, lane AdobeLane, err error) *UpstreamFailoverError {
 	failure := classifyAdobeError(err)
 	if failure.Failover == nil {
 		return nil
 	}
 	if s != nil {
+		if _, sidelined := adobeExpressSideLineReasons[failure.Failover.Reason]; lane.IsExpress() && sidelined {
+			applyAdobeExpressSidelined(ctx, s.accountRepo, accountID, token, failure)
+			return failure.Failover
+		}
 		applyAdobeCooldown(ctx, s.accountRepo, accountID, failure)
 		applyAdobeTokenInvalidation(ctx, s.accountRepo, accountID, token, failure)
 	}
 	return failure.Failover
+}
+
+// adobeExpressSideLineReasons 是只停 express 付费通道的失败原因：
+// 这些错误说明付费通道不可用，但账号（免费通道）本身没问题。
+var adobeExpressSideLineReasons = map[GatewayFailureReason]struct{}{
+	adobeFailureQuotaExhausted: {},
+	adobeFailureNotEntitled:    {},
+	adobeFailureAuth:           {},
+}
+
+// adobeExpressSidelinedCooldown 是请求路径撞到 express 失败后停用付费通道的
+// 兜底窗口；余额轮询会用 availableUntil / available>0 纠正它。
+const adobeExpressSidelinedCooldown = 30 * time.Minute
+
+// applyAdobeExpressSidelined 处置 express 通道失败：写耗尽窗口、按值失效
+// express token。账号不冷却——同一账号的免费通道立即可用。
+func applyAdobeExpressSidelined(
+	ctx context.Context, repo AccountRepository, accountID int64, token string, failure adobeFailure,
+) {
+	until := time.Now().Add(adobeExpressSidelinedCooldown)
+	setAdobeExpressExhausted(ctx, repo, accountID, &until)
+	if !failure.InvalidateToken || accountID <= 0 || token == "" {
+		return
+	}
+	invalidator, ok := repo.(AdobeExpressCredentialsRepository)
+	if !ok {
+		return
+	}
+	if _, err := invalidator.InvalidateAdobeExpressTokenIfUnchanged(ctx, accountID, token); err != nil {
+		logger.L().With(zap.String("component", "service.adobe")).Warn(
+			"adobe.express_token_invalidation_failed",
+			zap.Int64("account_id", accountID),
+			zap.Error(err),
+		)
+	}
+}
+
+// AdobeExpressRetryFreeLane 报告这次 failover 之后调用方是否应让同一账号立即
+// 改走免费通道重试：失败发生在 express（付费积分）通道且只影响付费通道。
+// 换号语义不变——调用方继续排除已失败账号时，下一个账号仍按各自的通道选择走。
+func AdobeExpressRetryFreeLane(lane AdobeLane, failover *UpstreamFailoverError) bool {
+	if !lane.IsExpress() || failover == nil {
+		return false
+	}
+	_, ok := adobeExpressSideLineReasons[failover.Reason]
+	return ok
 }
 
 // applyAdobeTokenInvalidation 清掉被上游明确拒绝的 access_token。失败只记日志——

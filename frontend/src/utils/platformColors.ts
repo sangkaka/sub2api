@@ -25,6 +25,7 @@ export type Platform =
   | 'command_code'
   | 'cline'
   | 'leonardo'
+  | 'fish'
   | 'composite'
 
 // ── Badge (bg + text + border, for inline badges with border) ───────
@@ -46,6 +47,7 @@ const BADGE: Record<Platform, string> = {
   cline: 'bg-violet-500/10 text-violet-600 border-violet-500/30 dark:text-violet-400',
   composite: 'bg-cyan-500/10 text-cyan-700 border-cyan-500/30 dark:text-cyan-300',
   leonardo: 'bg-indigo-500/10 text-indigo-600 border-indigo-500/30 dark:text-indigo-400',
+  fish: 'bg-cyan-500/10 text-cyan-600 border-cyan-500/30 dark:text-cyan-400',
 }
 const BADGE_DEFAULT = 'bg-slate-500/10 text-slate-600 border-slate-500/30 dark:text-slate-400'
 
@@ -68,6 +70,7 @@ const BADGE_LIGHT: Record<Platform, string> = {
   cline: 'bg-violet-500/10 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300',
   composite: 'bg-cyan-500/10 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-300',
   leonardo: 'bg-indigo-500/10 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300',
+  fish: 'bg-cyan-500/10 text-cyan-600 dark:bg-cyan-500/10 dark:text-cyan-300',
 }
 
 // ── Border ──────────────────────────────────────────────────────────
@@ -89,6 +92,7 @@ const BORDER: Record<Platform, string> = {
   cline: 'border-violet-500/20 dark:border-violet-500/20',
   composite: 'border-cyan-500/20 dark:border-cyan-500/20',
   leonardo: 'border-indigo-500/20 dark:border-indigo-500/20',
+  fish: 'border-cyan-500/20 dark:border-cyan-500/20',
 }
 const BORDER_DEFAULT = 'border-gray-200 dark:border-dark-700'
 
@@ -111,6 +115,7 @@ const BORDER_STRONG: Record<Platform, string> = {
   cline: 'border-violet-500/35 dark:border-violet-500/30',
   composite: 'border-cyan-500/35 dark:border-cyan-500/30',
   leonardo: 'border-indigo-500/35 dark:border-indigo-500/30',
+  fish: 'border-cyan-500/35 dark:border-cyan-500/30',
 }
 const BORDER_STRONG_DEFAULT = 'border-gray-300 dark:border-dark-600'
 
@@ -134,6 +139,7 @@ const ACCENT: Record<Platform, string> = {
   cline: '#8b5cf6', // violet-500（Cline 品牌紫 #9F58FA）
   composite: '#06b6d4', // cyan-500
   leonardo: '#6366f1', // indigo-500
+  fish: '#06b6d4', // cyan-500
 }
 const ACCENT_DEFAULT = '#14b8a6' // primary-500 (teal)
 
@@ -156,6 +162,7 @@ const ACCENT_BAR: Record<Platform, string> = {
   cline: 'bg-gradient-to-r from-violet-400 to-violet-500',
   composite: 'bg-gradient-to-r from-slate-500 to-cyan-500',
   leonardo: 'bg-gradient-to-r from-indigo-400 to-indigo-500',
+  fish: 'bg-gradient-to-r from-cyan-400 to-cyan-500',
 }
 const ACCENT_BAR_DEFAULT = 'bg-gradient-to-r from-primary-400 to-primary-500'
 
@@ -178,6 +185,7 @@ const TEXT: Record<Platform, string> = {
   cline: 'text-violet-600 dark:text-violet-400',
   composite: 'text-cyan-700 dark:text-cyan-300',
   leonardo: 'text-indigo-600 dark:text-indigo-400',
+  fish: 'text-cyan-600 dark:text-cyan-400',
 }
 const TEXT_DEFAULT = 'text-primary-600 dark:text-primary-400'
 
@@ -200,6 +208,7 @@ const ICON: Record<Platform, string> = {
   cline: 'text-violet-500 dark:text-violet-400',
   composite: 'text-cyan-600 dark:text-cyan-300',
   leonardo: 'text-indigo-500 dark:text-indigo-400',
+  fish: 'text-cyan-500 dark:text-cyan-400',
 }
 const ICON_DEFAULT = 'text-primary-500 dark:text-primary-400'
 
@@ -222,6 +231,7 @@ const BUTTON: Record<Platform, string> = {
   cline: 'bg-violet-500 text-white hover:bg-violet-600 active:bg-violet-700 dark:bg-violet-500/80 dark:hover:bg-violet-500',
   composite: 'bg-cyan-700 text-white hover:bg-cyan-800 active:bg-cyan-900 dark:bg-cyan-600 dark:hover:bg-cyan-500',
   leonardo: 'bg-indigo-500 text-white hover:bg-indigo-600 active:bg-indigo-700 dark:bg-indigo-500/80 dark:hover:bg-indigo-500',
+  fish: 'bg-cyan-500 text-white hover:bg-cyan-600 active:bg-cyan-700 dark:bg-cyan-500/80 dark:hover:bg-cyan-500',
 }
 const BUTTON_DEFAULT = 'bg-primary-500 text-white hover:bg-primary-600 dark:bg-primary-600 dark:hover:bg-primary-500'
 
@@ -244,6 +254,7 @@ const DISCOUNT: Record<Platform, string> = {
   cline: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300',
   composite: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300',
   leonardo: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
+  fish: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300',
 }
 const DISCOUNT_DEFAULT = 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
 
@@ -266,6 +277,7 @@ const GRADIENT: Record<Platform, string> = {
   cline: 'from-violet-500 to-violet-600',
   composite: 'from-slate-600 to-cyan-600',
   leonardo: 'from-indigo-500 to-indigo-600',
+  fish: 'from-cyan-500 to-cyan-600',
 }
 const GRADIENT_DEFAULT = 'from-primary-500 to-primary-600'
 
@@ -288,6 +300,7 @@ const GRADIENT_TEXT: Record<Platform, string> = {
   cline: 'text-violet-100',
   composite: 'text-cyan-100',
   leonardo: 'text-indigo-100',
+  fish: 'text-cyan-100',
 }
 const GRADIENT_TEXT_DEFAULT = 'text-primary-100'
 
@@ -308,6 +321,7 @@ const GRADIENT_SUBTEXT: Record<Platform, string> = {
   command_code: 'text-neutral-200',
   cline: 'text-violet-200',
   leonardo: 'text-indigo-200',
+  fish: 'text-cyan-200',
   composite: 'text-cyan-200',
 }
 const GRADIENT_SUBTEXT_DEFAULT = 'text-primary-200'

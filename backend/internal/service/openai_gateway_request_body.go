@@ -70,7 +70,7 @@ func shouldPreserveOpenAIResponsesNoneReasoningEffort(account *Account) bool {
 	if account.IsOpenAIPassthroughEnabled() {
 		return true
 	}
-	if account.IsOpenAIOAuthLike() {
+	if account.IsOpenAIOAuthLike() || account.IsBPSOAuth() {
 		return true
 	}
 	if !account.IsOpenAIApiKey() {

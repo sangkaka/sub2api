@@ -44,7 +44,7 @@ func newAdobeTokenProvider(accountRepo AccountRepository, refreshAPI *OAuthRefre
 	}
 }
 
-// GetAccessToken 返回可用的 IMS access_token。
+// GetAccessToken 返回可用的 IMS access_token（firefly 免费通道）。
 //
 // 刷新失败时的取舍：
 //   - cookie 已失效（AuthError）：账号置 error 并返回错误，即便旧 token 尚未过期；
@@ -54,13 +54,55 @@ func newAdobeTokenProvider(accountRepo AccountRepository, refreshAPI *OAuthRefre
 // 无 cookie 可换时照用旧 token，让上游 401 作为权威结果——与账号测试路径一致。
 // 调用方传入的 account 是调度快照，这里不修改其 Credentials。
 func (p *AdobeTokenProvider) GetAccessToken(ctx context.Context, account *Account) (string, error) {
+	return p.getLaneToken(ctx, account, AdobeLaneFirefly)
+}
+
+// GetGenerationToken 为一次出图选择计费通道并返回该通道可用的 token。
+//
+// 通道选择见 SelectAdobeGenerationLane：积分优先且 express 可用 → express（付费
+// 积分），否则 firefly（免费额度）。express 拿不到 token（铸币退避窗口内、刷新
+// 失败等）时降级 firefly——付费通道的问题不该让请求失败，返回的 lane 始终是
+// 实际拿到 token 的通道。
+func (p *AdobeTokenProvider) GetGenerationToken(
+	ctx context.Context, account *Account, freeLaneOnly bool,
+) (string, AdobeLane, error) {
+	if account == nil {
+		return "", AdobeLaneFirefly, errors.New("account is nil")
+	}
+	lane := SelectAdobeGenerationLane(account, freeLaneOnly)
+	if !lane.IsExpress() {
+		token, err := p.getLaneToken(ctx, account, AdobeLaneFirefly)
+		return token, AdobeLaneFirefly, err
+	}
+	token, err := p.getLaneToken(ctx, account, AdobeLaneExpress)
+	if err == nil {
+		return token, AdobeLaneExpress, nil
+	}
+	slog.Warn("adobe_express_token_unavailable_fallback_free",
+		"account_id", account.ID, "error", err)
+	token, err = p.getLaneToken(ctx, account, AdobeLaneFirefly)
+	return token, AdobeLaneFirefly, err
+}
+
+// laneCredentialKey 是通道对应的凭据键。
+func laneCredentialKey(lane AdobeLane) string {
+	if lane.IsExpress() {
+		return adobeExpressAccessTokenKey
+	}
+	return "access_token"
+}
+
+// getLaneToken 是 GetAccessToken 的通道参数化版本：express 通道复用同一套
+// 锁 + 重读 + 二次检查的刷新编排（Refresh 内部会同时铸两种 token）。
+func (p *AdobeTokenProvider) getLaneToken(ctx context.Context, account *Account, lane AdobeLane) (string, error) {
 	if account == nil {
 		return "", errors.New("account is nil")
 	}
-	token := strings.TrimSpace(account.GetCredential("access_token"))
+	credentialKey := laneCredentialKey(lane)
+	token := strings.TrimSpace(account.GetCredential(credentialKey))
 	if p == nil || p.refresher == nil || p.refreshAPI == nil {
 		if token == "" {
-			return "", errors.New("access_token not found in credentials")
+			return "", errors.New(strings.TrimPrefix(credentialKey, "express_") + " not found in credentials")
 		}
 		return token, nil
 	}
@@ -71,7 +113,7 @@ func (p *AdobeTokenProvider) GetAccessToken(ctx context.Context, account *Accoun
 
 	if !p.refresher.CanRefresh(account) {
 		if token == "" {
-			return "", errors.New("access_token not found in credentials")
+			return "", errors.New(strings.TrimPrefix(credentialKey, "express_") + " not found in credentials")
 		}
 		return token, nil
 	}
@@ -90,7 +132,7 @@ func (p *AdobeTokenProvider) GetAccessToken(ctx context.Context, account *Accoun
 			return "", err
 		case usable:
 			slog.Warn("adobe_token_refresh_failed_use_existing",
-				"account_id", account.ID, "error", err)
+				"account_id", account.ID, "lane", lane.String(), "error", err)
 			return token, nil
 		default:
 			return "", err
@@ -101,22 +143,22 @@ func (p *AdobeTokenProvider) GetAccessToken(ctx context.Context, account *Accoun
 		if usable {
 			return token, nil
 		}
-		return p.waitForConcurrentRefresh(ctx, account)
+		return p.waitForConcurrentRefresh(ctx, account, credentialKey)
 	}
 
 	if result.Account != nil {
-		if refreshed := strings.TrimSpace(result.Account.GetCredential("access_token")); adobeTokenUsable(refreshed) {
+		if refreshed := strings.TrimSpace(result.Account.GetCredential(credentialKey)); adobeTokenUsable(refreshed) {
 			return refreshed, nil
 		}
 	}
 	if usable {
 		return token, nil
 	}
-	return "", errors.New("adobe refresh returned no usable access_token")
+	return "", errors.New("adobe refresh returned no usable access_token for lane " + lane.String())
 }
 
 // waitForConcurrentRefresh 在其它实例持有刷新锁时短暂等待，再从 DB 读一次结果。
-func (p *AdobeTokenProvider) waitForConcurrentRefresh(ctx context.Context, account *Account) (string, error) {
+func (p *AdobeTokenProvider) waitForConcurrentRefresh(ctx context.Context, account *Account, credentialKey string) (string, error) {
 	timer := time.NewTimer(adobeLockWaitTime)
 	defer timer.Stop()
 	select {
@@ -127,7 +169,7 @@ func (p *AdobeTokenProvider) waitForConcurrentRefresh(ctx context.Context, accou
 	if p.accountRepo != nil {
 		latest, err := p.accountRepo.GetByID(ctx, account.ID)
 		if err == nil && latest != nil {
-			if refreshed := strings.TrimSpace(latest.GetCredential("access_token")); adobeTokenUsable(refreshed) {
+			if refreshed := strings.TrimSpace(latest.GetCredential(credentialKey)); adobeTokenUsable(refreshed) {
 				return refreshed, nil
 			}
 		}
@@ -165,4 +207,12 @@ func markAdobeCookieRefreshPermanentFailure(ctx context.Context, repo AccountRep
 
 func (s *GatewayService) getAdobeOAuthToken(ctx context.Context, account *Account) (string, error) {
 	return s.adobeTokenProvider.GetAccessToken(ctx, account)
+}
+
+// GetAdobeGenerationToken 为出图选择计费通道并取 token，语义见
+// AdobeTokenProvider.GetGenerationToken。handler 层的出图路径一律走这里。
+func (s *GatewayService) GetAdobeGenerationToken(
+	ctx context.Context, account *Account, freeLaneOnly bool,
+) (string, AdobeLane, error) {
+	return s.adobeTokenProvider.GetGenerationToken(ctx, account, freeLaneOnly)
 }

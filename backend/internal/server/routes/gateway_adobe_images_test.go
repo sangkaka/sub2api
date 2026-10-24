@@ -31,7 +31,7 @@ func adobeRoutesRouterWithResolver(t *testing.T, group *service.Group, resolver 
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	h := &handler.Handlers{
 		Gateway: handler.NewGatewayHandler(nil, openAI, nil, nil, nil, nil, nil, nil, nil, nil,
-			nil, nil, nil, nil, service.NewAdobeImageService(nil), nil, cfg, nil),
+			nil, nil, nil, nil, service.NewAdobeImageService(nil), nil, nil, cfg, nil),
 		OpenAIGateway: handler.NewOpenAIGatewayHandler(openAI, nil, nil, nil, nil, nil, nil, nil, nil, cfg),
 		AsyncImage:    handler.NewAsyncImageHandler(nil, nil, nil),
 	}
@@ -216,7 +216,7 @@ func adobeGeminiV1BetaRouterWithResolver(t *testing.T, group *service.Group, res
 	openAI := service.NewOpenAIGatewayService(nil, nil, nil, nil, nil, nil, nil, cfg,
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	h := handler.NewGatewayHandler(nil, openAI, nil, nil, nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, nil, service.NewAdobeImageService(nil), nil, cfg, nil)
+		nil, nil, nil, nil, service.NewAdobeImageService(nil), nil, nil, cfg, nil)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(servermiddleware.ContextKeyAPIKey), &service.APIKey{ID: 11, GroupID: &group.ID, Group: group})

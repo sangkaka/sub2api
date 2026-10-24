@@ -254,7 +254,7 @@ func (s *GatewayService) executeKiroWebSearch(ctx context.Context, account *Acco
 			return kiropkg.ParseNonStreamingEventStreamWithContext(resp.Body, requestModel, kiropkg.KiroRequestContext{
 				CacheEmulationUsage:  cacheUsage.toKiroUsage(),
 				EstimatedInputTokens: inputTokens,
-				TokenizerAlgorithm:    s.kiroMeteringAlgorithm(ctx),
+				TokenizerAlgorithm:   s.kiroMeteringAlgorithm(ctx),
 			})
 		}()
 		if parseErr != nil {

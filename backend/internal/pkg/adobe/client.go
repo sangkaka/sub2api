@@ -572,7 +572,9 @@ func classifyAdobeHTTPError(status int, body, message string) error {
 // 但处置完全不同——冷却账号、换更高套餐号、刷新凭据，不能混为一谈。
 func authOrQuotaError(resp *Response) error {
 	accessError := resp.Header("x-access-error")
-	if accessError == "taste_exhausted" {
+	// 耗尽信号按 *_exhausted 后缀匹配（生产见过 taste_exhausted 与 quota_exhausted
+	// 两种字面量）：不枚举字面量，上游再出新变体也归入配额语义。
+	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(accessError)), "_exhausted") {
 		return NewQuotaExhaustedError("Adobe quota exhausted for this account", resp.StatusCode)
 	}
 	preview := resp.BodyPreview()

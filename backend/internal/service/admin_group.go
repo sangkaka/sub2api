@@ -415,6 +415,8 @@ func defaultModelsListCandidateIDs(platform string) []string {
 		return []string{typesafe.JevLatestModel}
 	case PlatformLeonardo:
 		return LeonardoModelIDs()
+	case PlatformFish:
+		return domain.FishModelNames()
 	case PlatformComposite:
 		return compositeDefaultModelsListCandidateIDs()
 	default:
@@ -431,11 +433,11 @@ func defaultModelsListCandidateIDs(platform string) []string {
 // request does not turn it off. Composite defaults disabled because the same switch also
 // gates OpenAI image generation there.
 //
-// fork：Adobe 与 Leonardo 分组只为出图服务，老客户端的 false 零值会让所有请求过不了
-// 出图闸，与 Grok 同理默认开启。
+// fork：Adobe / Leonardo / Fish 分组只为出图服务，老客户端的 false 零值会让所有请求
+// 过不了出图闸，与 Grok 同理默认开启。
 func DefaultAllowImageGenerationForPlatform(platform string) bool {
 	switch platform {
-	case PlatformGrok, PlatformGemini, PlatformAntigravity, PlatformAdobe, PlatformLeonardo:
+	case PlatformGrok, PlatformGemini, PlatformAntigravity, PlatformAdobe, PlatformLeonardo, PlatformFish:
 		return true
 	default:
 		return false

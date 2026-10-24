@@ -83,6 +83,7 @@ type GatewayHandler struct {
 	userMsgQueueHelper         *UserMsgQueueHelper
 	adobeImageService          *service.AdobeImageService
 	leonardoImageService       *service.LeonardoImageService
+	fishImageService           *service.FishImageService
 	imageLimiter               *imageConcurrencyLimiter
 	maxAccountSwitches         int
 	maxAccountSwitchesGemini   int
@@ -109,6 +110,7 @@ func NewGatewayHandler(
 	userMsgQueueService *service.UserMessageQueueService,
 	adobeImageService *service.AdobeImageService,
 	leonardoImageService *service.LeonardoImageService,
+	fishImageService *service.FishImageService,
 	cfg *config.Config,
 	settingService *service.SettingService,
 ) *GatewayHandler {
@@ -148,6 +150,7 @@ func NewGatewayHandler(
 		userMsgQueueHelper:        umqHelper,
 		adobeImageService:         adobeImageService,
 		leonardoImageService:      leonardoImageService,
+		fishImageService:          fishImageService,
 		imageLimiter:              sharedImageConcurrencyLimiter,
 		maxAccountSwitches:        maxAccountSwitches,
 		maxAccountSwitchesGemini:  maxAccountSwitchesGemini,
@@ -1568,6 +1571,8 @@ func defaultModelIDsForPlatform(platform string) []string {
 		return ids
 	case service.PlatformLeonardo:
 		return service.LeonardoModelIDs()
+	case service.PlatformFish:
+		return domain.FishModelNames()
 	case service.PlatformKiro:
 		ids := make([]string, 0, len(kiro.DefaultModels))
 		for _, model := range kiro.DefaultModels {

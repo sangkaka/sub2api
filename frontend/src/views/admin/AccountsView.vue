@@ -328,7 +328,9 @@
               :today-stats="todayStatsByAccountId[String(row.id)] ?? null"
               :today-stats-loading="todayStatsLoading"
               :manual-refresh-token="usageManualRefreshToken"
-              @kiro-usage-meta="handleKiroUsageMeta(row, $event)"
+              @kiro-usage-meta="handleUsagePlanMeta(row, $event)"
+              @leonardo-usage-meta="handleUsagePlanMeta(row, $event)"
+              @fish-usage-meta="handleFishUsageMeta(row, $event)"
               :batched-usage="usageBatchByAccountId[String(row.id)] ?? null"
               :batched-usage-error="usageBatchErrorByAccountId[String(row.id)] ?? null"
               :batched-usage-loading="usageBatchLoadingByAccountId[String(row.id)] === true"
@@ -814,7 +816,7 @@ const accountSupportsBatchUsage = (account: Account) => {
   }
   if (account.platform === 'gemini') return true
   if (account.platform === 'antigravity') return account.type === 'oauth'
-  if (account.platform === 'openai') return account.type === 'oauth'
+  if (account.platform === 'openai') return account.type === 'oauth' || account.type === 'bps-oauth'
   if (account.platform === 'grok') return account.type === 'oauth'
   if (account.platform === 'adobe') return account.type === 'oauth'
   return false
@@ -1493,8 +1495,18 @@ const shouldReplaceAutoRefreshRow = (current: Account, next: Account) => {
   )
 }
 
-const handleKiroUsageMeta = (account: Account, meta: { plan_type?: string }) => {
-  if (account.platform !== 'kiro') return
+// Kiro / Leonardo 的套餐来自用量接口，合并进内存态 credentials.plan_type，
+// 供「平台/类型」列的 PlatformTypeBadge 渲染（不落库，刷新后由用量重新回填）。
+const handleUsagePlanMeta = (account: Account, meta: { plan_type?: string }) => {
+  if (account.platform !== 'kiro' && account.platform !== 'leonardo') return
+  account.credentials = {
+    ...(account.credentials || {}),
+    ...(meta.plan_type ? { plan_type: meta.plan_type } : {})
+  }
+}
+
+const handleFishUsageMeta = (account: Account, meta: { plan_type?: string }) => {
+  if (account.platform !== 'fish') return
   account.credentials = {
     ...(account.credentials || {}),
     ...(meta.plan_type ? { plan_type: meta.plan_type } : {})

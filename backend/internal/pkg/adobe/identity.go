@@ -73,6 +73,24 @@ var DefaultIdentity = Identity{
 	TLSProfile: "chrome_146",
 }
 
+// ExpressIdentity 是 Adobe Express 付费通道的身份参数。
+//
+// 与 DefaultIdentity 的差异只在 client_id / scope / Origin / Referer / x-api-key：
+// IMS 按「铸币时的 client_id/scope」决定 token 是否携带 "unlimited generations
+// (Firefly apps only)" 权益——projectx_webapp 铸出的 token 不带该权益，出图即
+// 消耗付费 generative credits（adobe2api 2026-08 生产验证）。同一份 cookie 可以
+// 同时铸出 firefly 与 express 两种 token。UA / TLS 指纹沿用同一组 Chrome 伪装：
+// 风控校验的是浏览器一致性，与计费身份正交。
+var ExpressIdentity = Identity{
+	IMSClientID: "projectx_webapp",
+	IMSScope:    "AdobeID,firefly_api,openid",
+
+	FireflyAPIKey: "projectx_webapp",
+
+	Origin:  "https://new.express.adobe.com",
+	Referer: "https://new.express.adobe.com/",
+}
+
 // Firefly 直连使用的上游端点。
 const (
 	ImageSubmitURL = "https://firefly-3p.ff.adobe.io/v2/3p-images/generate-async"

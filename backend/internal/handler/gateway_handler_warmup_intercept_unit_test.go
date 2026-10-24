@@ -168,6 +168,7 @@ func newTestGatewayHandlerWithSchedulerCache(t *testing.T, group *service.Group,
 
 	gwSvc := service.NewGatewayService(
 		nil, // accountRepo (not used: scheduler snapshot hit)
+
 		&fakeGroupRepo{group: group},
 		nil, // usageLogRepo
 		nil, // usageBillingRepo
@@ -189,6 +190,7 @@ func newTestGatewayHandlerWithSchedulerCache(t *testing.T, group *service.Group,
 		nil, // adobeTokenProvider
 		nil, // leonardoTokenProvider
 		nil, // kiroCooldownStore
+		nil, // kiroCacheEmulationRemote
 		nil, // sessionLimitCache
 		nil, // rpmCache
 		nil, // digestStore

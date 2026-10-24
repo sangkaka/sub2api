@@ -179,7 +179,7 @@ func TestAdobeImageServicePassesGeminiAspectRatioAndImageSize(t *testing.T) {
 	call.AspectRatio = "16:9"
 	call.ImageSize = "2K"
 
-	result, err := svc.GenerateCall(context.Background(), adobeTestAccount(), "tok", call)
+	result, err := svc.GenerateCall(context.Background(), adobeTestAccount(), "tok", AdobeLaneFirefly, call)
 	require.NoError(t, err)
 	require.Equal(t, "2K", result.Forward.ImageSize)
 	require.Equal(t, "firefly-nano-banana-pro-2k-16x9", result.Forward.UpstreamModel)
@@ -209,7 +209,7 @@ func TestAdobeImageServiceGeminiAspectRatioReachesGPTImagePixels(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "2048x1152", req.Size)
 
-	result, err := svc.GenerateCall(context.Background(), adobeTestAccount(), "tok", call)
+	result, err := svc.GenerateCall(context.Background(), adobeTestAccount(), "tok", AdobeLaneFirefly, call)
 	require.NoError(t, err)
 	require.Equal(t, "2K", result.Forward.ImageSize)
 
@@ -960,7 +960,7 @@ func TestAdobeImageCallFetchesInputImagesOnce(t *testing.T) {
 	}, "")
 
 	for i := 0; i < 2; i++ {
-		_, err := svc.GenerateCall(context.Background(), adobeTestAccount(), "tok", call)
+		_, err := svc.GenerateCall(context.Background(), adobeTestAccount(), "tok", AdobeLaneFirefly, call)
 		require.Error(t, err)
 	}
 	require.Equal(t, 1, rt.calls, "input image url must be fetched once per client request")
@@ -973,7 +973,7 @@ func TestAdobeImageCallUsesChannelMappedModel(t *testing.T) {
 	client := adobeSubmitPollDownload(t, api, []byte("PNG"))
 	svc := newAdobeTestService(t, client, nil)
 
-	result, err := svc.GenerateCall(context.Background(), adobeTestAccount(), "tok", NewAdobeImageCall(&OpenAIImagesRequest{
+	result, err := svc.GenerateCall(context.Background(), adobeTestAccount(), "tok", AdobeLaneFirefly, NewAdobeImageCall(&OpenAIImagesRequest{
 		Model: "my-alias", Prompt: "a cat", Size: "1024x1024", N: 1,
 	}, "nano-banana-pro"))
 	require.NoError(t, err)
