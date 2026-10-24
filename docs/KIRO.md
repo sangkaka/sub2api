@@ -323,3 +323,42 @@ go vet  -tags=e2e ./...
 2. **本机装一个与 CI 同版本的 golangci-lint 再动手**，否则只能靠 CI 反馈：
    `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.0`
    （版本以 `.github/workflows/backend-ci.yml` 里 `golangci-lint-action` 的 `version` 为准）。
+
+### 冲突解决整文件取一侧会静默丢上游小修
+
+规则的「取并集」「上游为骨架」之外，2026-10 两次同步各踩了一回「整段按一侧解决，
+把另一侧**不冲突位置**的小修一起抹掉」的坑。共同点：文件同时在 fork 与上游各自演进，
+fork 侧改动多，解决冲突时顺着 fork 版本抄写顺手，就把上游夹在中间的修复漏掉了。
+这种丢失 git 不会报——冲突标记只圈住双方都改过的行，没改过的行根本不进冲突块。
+
+- **v0.2.17 同步丢 `AccountUsageCell.vue` 的第三方 Gemini 修复**（上游 `2588675ce`，
+  `isGeminiThirdPartyApiKey` / `isGeminiVertex` / `showGeminiQuotaPolicy` / vertex 配额
+  进度条 / `supportsAccountQuota`），v0.2.18 同步才随上游恢复。凡是 fork 侧增改多的
+  `.vue` 组件，合完应对 `git diff upstream/main -- <file>` 做一次「上游有、本地无」
+  的逐行回看，`^<` 开头的行只要语义还成立就该在。
+- **Oct-14 的 abe0aa72a 合并丢 `admin_group.go` 分组 i18n 接线**（上游 `9a5133310` +
+  `8b74741ef`：`CreateGroup`/`UpdateGroup` 调 `normalizeGroupI18n`、simple-mode 归一器
+  保留 `I18n` 字段、`group.I18n` 落库）。丢了不红代码、只红测试
+  （`TestAdminService_CreateGroup_NormalizesI18n` 等 4 条），v0.2.18 同步时按
+  `9c2cca9e6` 版本补回。教训：**测试红了先别归因为「上游改动」**，拿 `git show
+  <base>:<file>` 对照，确认测试期望的功能在两侧谁的版本里、本地是不是把它合丢了。
+- 对照手法：`git diff upstream/main -- <冲突文件>` 只剩 fork 独有功能（kiro/adobe/
+  leonardo 分支）时才算合干净；只要出现与两边功能都无关的缺失行，就是解决时抄丢了。
+- **v0.2.18 同步又从 kiro 基线丢过两处 fork 功能**（v0.2.17 拣入时以 kiro 版整文件
+  覆盖所致），本次一并补回：`EditAccountModal.vue` 的 Kiro 直连 API Key 区域选择器
+  （`edit-kiro-api-region-select` / `ksk_...` 占位 / `api_region` 读写，kiro
+  `629214d23`+`3f6d2c55c`）与 Codex telemetry 开关（`edit-codex-telemetry-toggle`，
+  含 `isOpenAIAgentIdentity` 条件与 `hadCodexTelemetryEnabled` 显式写 false）。
+  修复线索是已知红测名单——**红测名单是丢功能的探测器，不是「永久容忍清单」**，
+  每次同步应试着把名单消掉一批，而不是照抄进下一次提交信息。
+
+### 上游改测试文件、fork 改被测签名：测试桩要按 fork 签名重排
+
+上游重构共享服务（如 `NewGatewayService`）或改 handler 时，常连带整文件搬移测试；
+这些测试文件在 fork 的签名（多 kiro/adobe/leonardo token provider、tlsFP 等参数）
+下编译不过。合并时测试文件无冲突地取了上游版，编译红点全在 `go vet` 阶段：
+`too many/not enough arguments`。修法是**以 fork 的 `wire_gen.go` 调用为权威参数序**，
+把上游测试桩的 nil 串按 fork 参数个数重排——不是反过来把签名改回上游。
+`NewGatewayService` 2026-10 时点为 32 参：18 `claudeTokenProvider` 后跟
+19 `kiroTokenProvider` / 20 `adobeTokenProvider` / 21 `leonardoTokenProvider`，
+26 `settingService` 后跟 27 `tlsFPProfileService`；下次再加参数按同样办法对齐。
