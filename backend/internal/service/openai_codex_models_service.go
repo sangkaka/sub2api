@@ -654,6 +654,9 @@ func configuredCodexGPTReasoningLevels(modelID string) []configuredCodexReasonin
 			Description: "Maximum reasoning with automatic task delegation",
 		})
 	}
+	if openai.IsGPT61TerraModelSpelling(modelID) {
+		levels = append([]configuredCodexReasoningLevel{{Effort: "none", Description: "No reasoning"}}, levels...)
+	}
 	return levels
 }
 
