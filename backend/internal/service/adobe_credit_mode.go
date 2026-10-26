@@ -95,9 +95,15 @@ type AdobeExpressCredentialsRepository interface {
 	InvalidateAdobeExpressTokenIfUnchanged(ctx context.Context, id int64, expectedAccessToken string) (bool, error)
 }
 
+// adobeExpressExhaustionWriter 是耗尽窗口写入所需的最小接口：只关心这一条
+// 写入的调用方（余额轮询）不必连带实现 token 失效。
+type adobeExpressExhaustionWriter interface {
+	SetAdobeExpressExhaustedUntil(ctx context.Context, id int64, until *time.Time) error
+}
+
 // setAdobeExpressExhausted 写入/清除 express 耗尽窗口，失败只记日志（见接口注释）。
 func setAdobeExpressExhausted(ctx context.Context, repo AccountRepository, accountID int64, until *time.Time) {
-	writer, ok := repo.(AdobeExpressCredentialsRepository)
+	writer, ok := repo.(adobeExpressExhaustionWriter)
 	if !ok || repo == nil || accountID <= 0 {
 		return
 	}

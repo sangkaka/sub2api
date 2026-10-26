@@ -272,6 +272,19 @@ func TestGenerateImageAuthErrors(t *testing.T) {
 		require.True(t, IsRotatable(err))
 	})
 
+	// 生产见过 taste_exhausted 与 quota_exhausted 两种字面量：按 *_exhausted
+	// 后缀归类，上游再出新变体也是配额语义而不是鉴权失败。
+	t.Run("quota_exhausted 与大写变体也归为配额耗尽", func(t *testing.T) {
+		for _, literal := range []string{"quota_exhausted", "Credits_Exhausted"} {
+			err := generate(t, jsonResponse(t, 403, map[string]any{},
+				map[string]string{"x-access-error": literal}))
+			var quota *QuotaExhaustedError
+			require.True(t, errors.As(err, &quota), literal)
+			var auth *AuthError
+			require.False(t, errors.As(err, &auth), literal)
+		}
+	})
+
 	t.Run("普通 401 归为鉴权失效", func(t *testing.T) {
 		err := generate(t, jsonResponse(t, 401, map[string]any{}, nil))
 		var auth *AuthError

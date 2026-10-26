@@ -163,8 +163,7 @@ func TestAdobeFailoverInvalidatesRejectedToken(t *testing.T) {
 	t.Run("401 清掉本次 token", func(t *testing.T) {
 		repo := &adobeTokenInvalidationRecorder{}
 		svc := &GatewayService{accountRepo: repo}
-		failover := svc.AdobeFailover(context.Background(), 9, "tok-rejected",
-			AdobeLaneFirefly,
+		failover := svc.AdobeFailover(context.Background(), 9, "tok-rejected", AdobeLaneFirefly,
 			adobe.NewAuthError("Token invalid or expired", http.StatusUnauthorized))
 		require.NotNil(t, failover)
 		require.Equal(t, adobeFailureAuth, failover.Reason)
@@ -176,8 +175,7 @@ func TestAdobeFailoverInvalidatesRejectedToken(t *testing.T) {
 	t.Run("403 不动凭据", func(t *testing.T) {
 		repo := &adobeTokenInvalidationRecorder{}
 		svc := &GatewayService{accountRepo: repo}
-		require.NotNil(t, svc.AdobeFailover(context.Background(), 9, "tok",
-			AdobeLaneFirefly,
+		require.NotNil(t, svc.AdobeFailover(context.Background(), 9, "tok", AdobeLaneFirefly,
 			adobe.NewAuthError("Token invalid or expired", http.StatusForbidden)))
 		require.Zero(t, repo.calls)
 	})
@@ -185,8 +183,7 @@ func TestAdobeFailoverInvalidatesRejectedToken(t *testing.T) {
 	t.Run("非鉴权错误不动凭据", func(t *testing.T) {
 		repo := &adobeTokenInvalidationRecorder{}
 		svc := &GatewayService{accountRepo: repo}
-		require.NotNil(t, svc.AdobeFailover(context.Background(), 9, "tok",
-			AdobeLaneFirefly,
+		require.NotNil(t, svc.AdobeFailover(context.Background(), 9, "tok", AdobeLaneFirefly,
 			adobe.NewUpstreamTemporaryError("boom", http.StatusBadGateway, adobe.ErrorTypeStatus)))
 		require.Zero(t, repo.calls)
 	})
@@ -194,11 +191,104 @@ func TestAdobeFailoverInvalidatesRejectedToken(t *testing.T) {
 	t.Run("清除失败不影响本次换号", func(t *testing.T) {
 		repo := &adobeTokenInvalidationRecorder{err: errors.New("db down")}
 		svc := &GatewayService{accountRepo: repo}
-		failover := svc.AdobeFailover(context.Background(), 9, "tok",
-			AdobeLaneFirefly,
+		failover := svc.AdobeFailover(context.Background(), 9, "tok", AdobeLaneFirefly,
 			adobe.NewAuthError("Token invalid or expired", http.StatusUnauthorized))
 		require.NotNil(t, failover)
 		require.Equal(t, NextAccountRetry, failover.NextAccountAction)
 		require.Equal(t, 1, repo.calls)
 	})
+}
+
+// adobeExpressStateRecorder 记录 express 状态写入、express token 失效与整号冷却，
+// 用于断言「express 撞墙只停付费通道」。
+type adobeExpressStateRecorder struct {
+	AccountRepository
+	exhausted     []*time.Time
+	invalidated   []string
+	unschedulable int
+}
+
+func (r *adobeExpressStateRecorder) SetAdobeExpressExhaustedUntil(_ context.Context, _ int64, until *time.Time) error {
+	r.exhausted = append(r.exhausted, until)
+	return nil
+}
+
+func (r *adobeExpressStateRecorder) InvalidateAdobeExpressTokenIfUnchanged(_ context.Context, _ int64, token string) (bool, error) {
+	r.invalidated = append(r.invalidated, token)
+	return true, nil
+}
+
+func (r *adobeExpressStateRecorder) SetTempUnschedulable(context.Context, int64, time.Time, string) error {
+	r.unschedulable++
+	return nil
+}
+
+func TestAdobeFailoverExpressQuotaOnlySidelinesExpress(t *testing.T) {
+	repo := &adobeExpressStateRecorder{}
+	svc := &GatewayService{accountRepo: repo}
+	failover := svc.AdobeFailover(context.Background(), 9, "express-tok", AdobeLaneExpress,
+		adobe.NewQuotaExhaustedError("Adobe quota exhausted for this account", http.StatusTooManyRequests))
+
+	require.NotNil(t, failover)
+	require.Equal(t, adobeFailureQuotaExhausted, failover.Reason)
+	require.Equal(t, NextAccountRetry, failover.NextAccountAction)
+	// 只停付费通道：写耗尽窗口，不整号冷却。
+	require.Len(t, repo.exhausted, 1)
+	require.NotNil(t, repo.exhausted[0])
+	require.WithinDuration(t, time.Now().Add(adobeExpressSidelinedCooldown), *repo.exhausted[0], time.Minute)
+	require.Zero(t, repo.unschedulable)
+	require.True(t, AdobeExpressRetryFreeLane(AdobeLaneExpress, failover))
+}
+
+func TestAdobeFailoverFireflyQuotaStillCoolsAccountDown(t *testing.T) {
+	repo := &adobeExpressStateRecorder{}
+	svc := &GatewayService{accountRepo: repo}
+	failover := svc.AdobeFailover(context.Background(), 9, "tok", AdobeLaneFirefly,
+		adobe.NewQuotaExhaustedError("Adobe quota exhausted for this account", http.StatusTooManyRequests))
+
+	require.NotNil(t, failover)
+	// 免费通道耗尽 = 两条通道都没了：维持整号冷却，express 状态不动。
+	require.Equal(t, 1, repo.unschedulable)
+	require.Empty(t, repo.exhausted)
+	require.False(t, AdobeExpressRetryFreeLane(AdobeLaneFirefly, failover))
+}
+
+func TestAdobeFailoverExpressAuthInvalidatesExpressTokenOnly(t *testing.T) {
+	repo := &adobeExpressStateRecorder{}
+	svc := &GatewayService{accountRepo: repo}
+	failover := svc.AdobeFailover(context.Background(), 9, "express-tok", AdobeLaneExpress,
+		adobe.NewAuthError("Token invalid or expired", http.StatusUnauthorized))
+
+	require.NotNil(t, failover)
+	require.Equal(t, adobeFailureAuth, failover.Reason)
+	require.Equal(t, []string{"express-tok"}, repo.invalidated)
+	require.Len(t, repo.exhausted, 1)
+	require.Zero(t, repo.unschedulable)
+	require.True(t, AdobeExpressRetryFreeLane(AdobeLaneExpress, failover))
+}
+
+func TestAdobeFailoverExpressNotEntitledSidelinesExpress(t *testing.T) {
+	repo := &adobeExpressStateRecorder{}
+	svc := &GatewayService{accountRepo: repo}
+	failover := svc.AdobeFailover(context.Background(), 9, "express-tok", AdobeLaneExpress,
+		adobe.NewNotEntitledError("not entitled", http.StatusForbidden, ""))
+
+	require.NotNil(t, failover)
+	require.Equal(t, adobeFailureNotEntitled, failover.Reason)
+	require.Len(t, repo.exhausted, 1)
+	require.Zero(t, repo.unschedulable)
+	require.True(t, AdobeExpressRetryFreeLane(AdobeLaneExpress, failover))
+}
+
+// express 通道的临时故障（上游 5xx/超时）不是付费通道的终态：照常换号，
+// 不写耗尽标记。
+func TestAdobeFailoverExpressTemporaryErrorKeepsLane(t *testing.T) {
+	repo := &adobeExpressStateRecorder{}
+	svc := &GatewayService{accountRepo: repo}
+	failover := svc.AdobeFailover(context.Background(), 9, "express-tok", AdobeLaneExpress,
+		adobe.NewUpstreamTemporaryError("boom", http.StatusBadGateway, adobe.ErrorTypeStatus))
+
+	require.NotNil(t, failover)
+	require.Empty(t, repo.exhausted)
+	require.False(t, AdobeExpressRetryFreeLane(AdobeLaneExpress, failover))
 }

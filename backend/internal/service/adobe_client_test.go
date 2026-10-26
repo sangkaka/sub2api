@@ -65,13 +65,14 @@ func TestAdobeClientCacheEvictsIdleEntries(t *testing.T) {
 	fresh := &Account{ID: 8}
 
 	cache.clientForAccount(stale)
-	cache.mu.Lock()
 	staleKey := adobeClientKey{accountID: stale.ID, lane: AdobeLaneFirefly}
+	freshKey := adobeClientKey{accountID: fresh.ID, lane: AdobeLaneFirefly}
+	cache.mu.Lock()
 	cache.clients[staleKey].lastUsed = time.Now().Add(-adobeClientIdleTTL - time.Minute)
 	cache.lastSweep = time.Time{}
 	cache.mu.Unlock()
 
 	cache.clientForAccount(fresh)
 	require.NotContains(t, cache.clients, staleKey)
-	require.Contains(t, cache.clients, adobeClientKey{accountID: fresh.ID, lane: AdobeLaneFirefly})
+	require.Contains(t, cache.clients, freshKey)
 }

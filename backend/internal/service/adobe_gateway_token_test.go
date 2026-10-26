@@ -450,3 +450,116 @@ func TestOAuthRefreshAPIAdobeRequiresConditionalRepository(t *testing.T) {
 	var configErr *providerConfigurationRefreshError
 	require.True(t, errors.As(err, &configErr))
 }
+
+func adobeUseCreditsTestAccount(id int64, credentials map[string]any) *Account {
+	account := adobeGatewayTestAccount(id, credentials)
+	account.Extra = map[string]any{"adobe_use_credits": true}
+	return account
+}
+
+// 积分优先且 express 可用：GetGenerationToken 直接返回 express token，不碰 IMS。
+func TestGetAdobeGenerationTokenPrefersExpress(t *testing.T) {
+	firefly := adobeTestToken(t, map[string]any{"exp": time.Now().Add(24 * time.Hour).Unix()})
+	express := adobeTestToken(t, map[string]any{"exp": time.Now().Add(12 * time.Hour).Unix()})
+	account := adobeUseCreditsTestAccount(41, map[string]any{
+		"cookie": "aux_sid=1", "access_token": firefly,
+		adobeExpressAccessTokenKey: express,
+	})
+	repo := newAdobeGatewayCredsRepo(account)
+	provider := newAdobeTokenProvider(repo, nil, newAdobeTestRefresher(t, adobeIMSMustNotBeCalled(t)))
+
+	token, lane, err := provider.GetGenerationToken(context.Background(), account, false)
+	require.NoError(t, err)
+	require.Equal(t, AdobeLaneExpress, lane)
+	require.Equal(t, express, token)
+}
+
+// 耗尽窗口内 / 请求内强制免费：回退 firefly 通道。
+func TestGetAdobeGenerationTokenFallsBackToFirefly(t *testing.T) {
+	firefly := adobeTestToken(t, map[string]any{"exp": time.Now().Add(24 * time.Hour).Unix()})
+	express := adobeTestToken(t, map[string]any{"exp": time.Now().Add(12 * time.Hour).Unix()})
+	base := func() *Account {
+		return adobeUseCreditsTestAccount(42, map[string]any{
+			"cookie": "aux_sid=1", "access_token": firefly,
+			adobeExpressAccessTokenKey: express,
+		})
+	}
+
+	exhausted := base()
+	exhausted.Credentials[adobeExpressExhaustedUntilKey] =
+		time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	repo := newAdobeGatewayCredsRepo(exhausted)
+	provider := newAdobeTokenProvider(repo, nil, newAdobeTestRefresher(t, adobeIMSMustNotBeCalled(t)))
+	token, lane, err := provider.GetGenerationToken(context.Background(), exhausted, false)
+	require.NoError(t, err)
+	require.Equal(t, AdobeLaneFirefly, lane)
+	require.Equal(t, firefly, token)
+
+	// 请求内强制免费（express 撞过耗尽后的同账号重试）。
+	forced := base()
+	repo2 := newAdobeGatewayCredsRepo(forced)
+	provider2 := newAdobeTokenProvider(repo2, nil, newAdobeTestRefresher(t, adobeIMSMustNotBeCalled(t)))
+	token, lane, err = provider2.GetGenerationToken(context.Background(), forced, true)
+	require.NoError(t, err)
+	require.Equal(t, AdobeLaneFirefly, lane)
+	require.Equal(t, firefly, token)
+}
+
+// express token 临期时走共享刷新：一次 Refresh 双铸两种 token，取回 express。
+func TestGetAdobeGenerationTokenRefreshesBothLanes(t *testing.T) {
+	firefly := adobeTestToken(t, map[string]any{"exp": time.Now().Add(24 * time.Hour).Unix()})
+	freshExpress := adobeTestToken(t, map[string]any{"exp": time.Now().Add(24 * time.Hour).Unix()})
+	staleExpress := adobeTestToken(t, map[string]any{"exp": time.Now().Add(-time.Hour).Unix()})
+	account := adobeUseCreditsTestAccount(43, map[string]any{
+		"cookie": "aux_sid=1", "access_token": firefly,
+		adobeExpressAccessTokenKey: staleExpress,
+	})
+	repo := newAdobeGatewayCredsRepo(account)
+
+	var expressMints atomic.Int32
+	refresher := newAdobeDualLaneTestRefresher(t, func(req *adobe.Request, _ int) (*adobe.Response, error) {
+		token := firefly
+		if adobeIMSFormValue(t, req, "client_id") == "projectx_webapp" {
+			expressMints.Add(1)
+			token = freshExpress
+		}
+		body, _ := json.Marshal(map[string]any{"access_token": token, "expires_in": 86400})
+		return &adobe.Response{StatusCode: 200, Headers: map[string]string{}, Body: body}, nil
+	})
+	provider := newAdobeTokenProvider(repo, nil, refresher)
+
+	token, lane, err := provider.GetGenerationToken(context.Background(), account, false)
+	require.NoError(t, err)
+	require.Equal(t, AdobeLaneExpress, lane)
+	require.Equal(t, freshExpress, token)
+	require.Equal(t, int32(1), expressMints.Load(), "express 必须用 projectx_webapp 铸一次")
+
+	// 双铸结果已落库：express 字段与 firefly 字段同时存在。
+	persisted, err := repo.GetByID(context.Background(), 43)
+	require.NoError(t, err)
+	require.Equal(t, freshExpress, persisted.GetCredential(adobeExpressAccessTokenKey))
+	require.Equal(t, firefly, persisted.GetCredential("access_token"))
+}
+
+// express 铸币失败（如账号无 Express 权益）：刷新仍成功，出图降级 firefly。
+func TestGetAdobeGenerationTokenDegradesWhenExpressMintFails(t *testing.T) {
+	firefly := adobeTestToken(t, map[string]any{"exp": time.Now().Add(24 * time.Hour).Unix()})
+	account := adobeUseCreditsTestAccount(44, map[string]any{
+		"cookie": "aux_sid=1",
+	})
+	repo := newAdobeGatewayCredsRepo(account)
+	refresher := newAdobeDualLaneTestRefresher(t, func(req *adobe.Request, _ int) (*adobe.Response, error) {
+		if adobeIMSFormValue(t, req, "client_id") == "projectx_webapp" {
+			return &adobe.Response{StatusCode: 400, Headers: map[string]string{},
+				Body: []byte(`{"error":"invalid_scope"}`)}, nil
+		}
+		body, _ := json.Marshal(map[string]any{"access_token": firefly, "expires_in": 86400})
+		return &adobe.Response{StatusCode: 200, Headers: map[string]string{}, Body: body}, nil
+	})
+	provider := newAdobeTokenProvider(repo, nil, refresher)
+
+	token, lane, err := provider.GetGenerationToken(context.Background(), account, false)
+	require.NoError(t, err)
+	require.Equal(t, AdobeLaneFirefly, lane, "express 铸不出 token 必须降级免费通道")
+	require.Equal(t, firefly, token)
+}

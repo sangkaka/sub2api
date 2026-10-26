@@ -32,6 +32,9 @@ type adobeClientCache struct {
 	// newClient 为空时用真实构造函数；单测替换它来注入假传输，避免打真网络。
 	// 测试替身不区分通道：fake 只关心传输注入，身份参数对断言不可见。
 	newClient func(proxyURL string) *adobe.Client
+	// newClientWithLane 同 newClient 但携带计费通道；非空时优先——需要区分
+	// firefly / express 身份的测试用这个钩子。
+	newClientWithLane func(proxyURL string, lane AdobeLane) *adobe.Client
 }
 
 // adobeClientKey 是缓存键：账号 × 计费通道。
@@ -54,6 +57,9 @@ func adobeClientFingerprint(account *Account, proxyURL string, lane AdobeLane) s
 }
 
 func (c *adobeClientCache) build(proxyURL string, lane AdobeLane) *adobe.Client {
+	if c.newClientWithLane != nil {
+		return c.newClientWithLane(proxyURL, lane)
+	}
 	if c.newClient != nil {
 		return c.newClient(proxyURL)
 	}

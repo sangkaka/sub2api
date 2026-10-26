@@ -43,10 +43,11 @@ func (c *stubAdobeCreditsClient) lastAccessToken() string {
 // adobeUsageTestRepo 记录 SetTempUnschedulable 调用，用于断言调度联动。
 type adobeUsageTestRepo struct {
 	AccountRepository
-	mu      sync.Mutex
-	calls   []adobeCooldownCall
-	updated map[string]any
-	account *Account
+	mu            sync.Mutex
+	calls         []adobeCooldownCall
+	expressWrites []*time.Time
+	updated       map[string]any
+	account       *Account
 }
 
 type adobeCooldownCall struct {
@@ -59,6 +60,14 @@ func (r *adobeUsageTestRepo) SetTempUnschedulable(_ context.Context, id int64, u
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls = append(r.calls, adobeCooldownCall{accountID: id, until: until, reason: reason})
+	return nil
+}
+
+// expressWrites 记录 SetAdobeExpressExhaustedUntil 调用：nil = 清除恢复。
+func (r *adobeUsageTestRepo) SetAdobeExpressExhaustedUntil(_ context.Context, _ int64, until *time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.expressWrites = append(r.expressWrites, until)
 	return nil
 }
 
@@ -494,4 +503,77 @@ func TestGetAdobeUsageLeaderCancelDoesNotPoisonFollowers(t *testing.T) {
 	cached, ok := svc.getCachedAdobeUsage(account.ID)
 	require.True(t, ok)
 	require.Empty(t, cached.Error)
+}
+
+func adobeUseCreditsAccount() *Account {
+	account := adobeAccountWithToken()
+	account.Extra = map[string]any{"adobe_use_credits": true}
+	return account
+}
+
+// 积分优先账号 credits 归零只停付费通道：免费（firefly）权益与余额独立，
+// 账号继续可调度，绝不能整号 SetTempUnschedulable。
+func TestGetAdobeUsageExhaustedStopsExpressLaneOnlyForUseCredits(t *testing.T) {
+	reset := time.Now().Add(6 * time.Hour).UTC().Round(time.Millisecond)
+	client := &stubAdobeCreditsClient{
+		balance: &adobe.CreditsBalance{
+			Total: int64Ptr(7960), Used: int64Ptr(7960), Available: int64Ptr(0),
+			AvailableUntil: reset.Format(time.RFC3339Nano),
+		},
+	}
+	repo := &adobeUsageTestRepo{}
+	svc := newAdobeUsageTestService(t, repo, client)
+
+	_, err := svc.getAdobeUsage(context.Background(), adobeUseCreditsAccount(), "active", true)
+	require.NoError(t, err)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Empty(t, repo.calls, "积分优先账号不得整号冷却")
+	require.Len(t, repo.expressWrites, 1)
+	require.NotNil(t, repo.expressWrites[0])
+	require.WithinDuration(t, reset, *repo.expressWrites[0], time.Second,
+		"express 耗尽窗口应精准落到 availableUntil")
+}
+
+// 积分优先账号余额回补：清掉 express 耗尽标记，通道恢复。
+func TestGetAdobeUsageRevivesExpressWhenBalanceRefilled(t *testing.T) {
+	client := &stubAdobeCreditsClient{
+		balance: &adobe.CreditsBalance{
+			Total: int64Ptr(7960), Used: int64Ptr(10), Available: int64Ptr(7950),
+		},
+	}
+	repo := &adobeUsageTestRepo{}
+	svc := newAdobeUsageTestService(t, repo, client)
+	account := adobeUseCreditsAccount()
+	account.Credentials[adobeExpressExhaustedUntilKey] =
+		time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+
+	_, err := svc.getAdobeUsage(context.Background(), account, "active", true)
+	require.NoError(t, err)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Empty(t, repo.calls)
+	require.Len(t, repo.expressWrites, 1, "有余额且带耗尽标记时必须清除一次")
+	require.Nil(t, repo.expressWrites[0])
+}
+
+// 余额有值但没有耗尽标记：不写任何状态，避免每轮轮询都落库。
+func TestGetAdobeUsageSkipsExpressWriteWithoutMarker(t *testing.T) {
+	client := &stubAdobeCreditsClient{
+		balance: &adobe.CreditsBalance{
+			Total: int64Ptr(10), Used: int64Ptr(2), Available: int64Ptr(8),
+		},
+	}
+	repo := &adobeUsageTestRepo{}
+	svc := newAdobeUsageTestService(t, repo, client)
+
+	_, err := svc.getAdobeUsage(context.Background(), adobeUseCreditsAccount(), "active", true)
+	require.NoError(t, err)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Empty(t, repo.calls)
+	require.Empty(t, repo.expressWrites)
 }

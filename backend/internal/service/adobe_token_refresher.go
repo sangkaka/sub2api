@@ -138,9 +138,10 @@ func (r *AdobeTokenRefresher) NeedsRefresh(account *Account, refreshWindow time.
 	if window < adobeRefreshWindow {
 		window = adobeRefreshWindow
 	}
-	// 空 token 解不出 exp，IsTokenExpired 会把它当「未过期」；缺 token 必须视为要刷新。
-	if accessToken := strings.TrimSpace(account.GetCredential("access_token")); accessToken == "" ||
-		adobe.IsTokenExpired(accessToken, window) {
+	token := strings.TrimSpace(account.GetCredential("access_token"))
+	// token 缺失必须刷新，否则新建的账号永远不会被填上 token。空串解不出 exp，
+	// IsTokenExpired 会把它当「未过期」，这里显式先判空。
+	if token == "" || adobe.IsTokenExpired(token, window) {
 		return true
 	}
 	if AdobeUseCredits(account) && AdobeExpressLaneAvailable(account) {

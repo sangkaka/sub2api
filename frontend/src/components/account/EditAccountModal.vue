@@ -957,6 +957,24 @@
         </div>
       </div>
 
+      <!-- Adobe OAuth：积分优先（付费 credits → 耗尽自动回退免费额度） -->
+      <div
+        v-if="account.platform === 'adobe' && account.type === 'oauth'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        data-testid="adobe-use-credits-section"
+      >
+        <label class="flex cursor-pointer items-center gap-2 text-sm" data-testid="adobe-use-credits-toggle">
+          <input
+            v-model="adobeUseCredits"
+            type="checkbox"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500"
+            data-testid="adobe-use-credits-checkbox"
+          />
+          <span class="text-gray-700 dark:text-gray-200">{{ t('admin.accounts.adobe.useCreditsLabel') }}</span>
+        </label>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.adobe.useCreditsHint') }}</p>
+      </div>
+
       <!-- OpenAI / Kiro / Grok / Adobe / Leonardo OAuth Model Mapping -->
       <div
         v-if="((account.platform === 'openai' || account.platform === 'kiro' || account.platform === 'grok' || account.platform === 'adobe' || account.platform === 'leonardo') && account.type === 'oauth') || (account.platform === 'openai' && account.type === 'bps-oauth')"
@@ -4250,6 +4268,8 @@ const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
 const excelBPSIgnoreEncryptedContent = ref(false)
 const excelBPSCacheCreationAsInput = ref(false)
+// Adobe OAuth（Cookie 账号）：积分优先开关，off 不落 extra 键（后端缺省=仅免费通道）。
+const adobeUseCredits = ref(false)
 // OpenAI 订阅档位（Plus / Pro 20x / Pro 5x / Business Standard / Business Premium / Free）手动覆盖值,
 // 存于 credentials.plan_type;'' 表示清空/自动识别
 const editPlanType = ref<string>('')
@@ -4861,6 +4881,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     openAILongContextBillingEnabled.value = extra?.openai_long_context_billing_enabled === true
     excelBPSIgnoreEncryptedContent.value = extra?.openai_excel_bps_ignore_encrypted_content === true
     excelBPSCacheCreationAsInput.value = extra?.openai_excel_bps_cache_creation_as_input === true
+  }
+  if (newAccount.platform === 'adobe' && newAccount.type === 'oauth') {
+    adobeUseCredits.value = extra?.adobe_use_credits === true
   }
   if (newAccount.platform === 'anthropic' && newAccount.type === 'apikey') {
     anthropicPassthroughEnabled.value = extra?.anthropic_passthrough === true
@@ -6244,6 +6267,19 @@ const handleSubmit = async () => {
       const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
         (props.account.extra as Record<string, unknown>) || {}
       updatePayload.extra = applyFishMaxQualityToExtra({ ...currentExtra }, fishMaxQuality.value)
+    }
+
+    // Adobe OAuth（Cookie 账号）：积分优先开关。off 不落键，保持 extra 干净。
+    if (props.account.platform === 'adobe' && props.account.type === 'oauth') {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) || {}
+      const newExtra: Record<string, unknown> = { ...currentExtra }
+      if (adobeUseCredits.value) {
+        newExtra.adobe_use_credits = true
+      } else {
+        delete newExtra.adobe_use_credits
+      }
+      updatePayload.extra = newExtra
     }
 
     // Grok OAuth: 自定义上游地址 + 请求头覆写。base_url 仅改写转发端点，
