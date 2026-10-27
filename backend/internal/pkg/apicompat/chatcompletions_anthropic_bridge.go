@@ -338,10 +338,36 @@ func anthropicToolsToChatTools(tools []AnthropicTool) []ChatTool {
 			Function: &ChatFunction{
 				Name:        t.Name,
 				Description: t.Description,
-				Parameters:  normalizeToolParameters(t.InputSchema),
+				Parameters:  ensureTopLevelRequiredArray(normalizeToolParameters(t.InputSchema)),
 				Strict:      boolPtr(false),
 			},
 		})
+	}
+	return out
+}
+
+// ensureTopLevelRequiredArray 给 type:object 且缺 required（或 required 为 null）的
+// 顶层工具 schema 补一个空的 "required": []。语义与缺省完全等价，但它挡住一类
+// OpenAI 兼容中转的通病：这类网关把 function parameters 反序列化进无 omitempty 的
+// 结构体再转发，缺失的 required 会被重写成 "required": null，随后被下游校验器以
+// `null is not of type "array"` 整单拒收（giikin new-api → Byteplus DeepSeek 实测，
+// Claude Code 的 ListAgents/Artifact/CronList 等无 required 工具全中招）。嵌套
+// object 不受影响（实测该网关只重建顶层），故只补顶层。
+func ensureTopLevelRequiredArray(schema json.RawMessage) json.RawMessage {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(schema, &m); err != nil || m == nil {
+		return schema
+	}
+	if string(m["type"]) != `"object"` {
+		return schema
+	}
+	if req, ok := m["required"]; ok && string(req) != "null" {
+		return schema
+	}
+	m["required"] = json.RawMessage(`[]`)
+	out, err := json.Marshal(m)
+	if err != nil {
+		return schema
 	}
 	return out
 }
