@@ -69,6 +69,12 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, err
 	}
 
+	// trae 平台：无 api_protocol/base_url 语义，协议解析不适用；走专属分支
+	//（请求转 Chat Completions 进 runtime 双通道，响应转译回 Anthropic 形）。
+	if account.Platform == PlatformTrae {
+		return s.forwardAnthropicViaTrae(ctx, c, account, body, defaultMappedModel)
+	}
+
 	// 上游协议统一由 resolveUpstreamProtocol 判定（按模型分流时带上游模型目录）。Anthropic 分流必须先于
 	// ShouldUseResponsesAPI：Anthropic 协议账号经 probe 落标
 	// openai_responses_supported=false，否则会命中 CC 直转。
