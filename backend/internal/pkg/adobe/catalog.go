@@ -217,12 +217,14 @@ var rawImageFamilySpecs = []imageFamilySpec{
 		label:                "Firefly Gemini 3 Pro Image",
 	},
 	{
-		// Step 7 bug 修正：改前 upstreamModelVersion 写成 nano-banana-2，与 Pro 撞车，
-		// 普通版请求实际打在 Pro 上。上游 discovery 里 nano-banana = Gemini 2.5 Flash Image。
+		// 上游已把 v1 modelVersion=nano-banana 从 generate-async 的 IMAGE 端点下架
+		// （2026-10 实测恒 422 validation_error，错误体支持列表里 gemini-flash 只剩
+		// nano-banana-2/-3 等 4 个版本）。公开名 nano-banana / gemini-2.5-flash-image
+		// 保留，落点与 Pro 同为 nano-banana-2（对齐 adobe2api-plus 的同名处理）。
 		familyID:             "firefly-nano-banana",
 		upstreamModel:        "google:firefly:colligo:nano-banana-pro",
 		upstreamModelID:      "gemini-flash",
-		upstreamModelVersion: "nano-banana",
+		upstreamModelVersion: "nano-banana-2",
 		payloadKind:          PayloadKindNanoBanana,
 		ratioSuffixes:        nanoBananaRatioSuffixes,
 		label:                "Firefly Gemini 2.5 Flash Image",

@@ -373,19 +373,20 @@ func mustFamilyRatios(t *testing.T, familyID string) []string {
 	return spec.ratiosSorted
 }
 
-// Step 7 回归：firefly-nano-banana 的 upstreamModelVersion 曾错写成 nano-banana-2
-// （与 Pro 撞车），导致所有普通版请求打在 Pro 上。这条守它不再回退。
+// 上游 2026-10 把 v1 modelVersion=nano-banana 从 IMAGE 端点下架（提交恒 422
+// validation_error），firefly-nano-banana 的公开名保留、落点改为 nano-banana-2
+// （与 Pro 相同）。这条守它不再指回已下架的 v1。
 func TestNanoBananaFamilyMapsToUnpluralizedUpstream(t *testing.T) {
 	spec, ok := imageFamilySpecByID("firefly-nano-banana")
 	require.True(t, ok)
-	require.Equal(t, "nano-banana", spec.upstreamModelVersion,
-		"firefly-nano-banana 必须指向上游 nano-banana，而不是 nano-banana-2（那是 Pro）")
+	require.Equal(t, "nano-banana-2", spec.upstreamModelVersion,
+		"上游已下架 v1 nano-banana，公开别名必须落到受支持的 nano-banana-2")
 
-	// Pro 与 base 不能撞车。
+	// v1 下架后 base 与 Pro 共用 nano-banana-2，是刻意为之。
 	pro, ok := imageFamilySpecByID("firefly-nano-banana-pro")
 	require.True(t, ok)
-	require.NotEqual(t, spec.upstreamModelVersion, pro.upstreamModelVersion,
-		"nano-banana 与 nano-banana-pro 必须打到不同上游版本")
+	require.Equal(t, pro.upstreamModelVersion, spec.upstreamModelVersion,
+		"nano-banana 与 nano-banana-pro 应同时指向 nano-banana-2")
 }
 
 // gpt-image 2.5 家族的族级 id 必须真的能解析到 2.5 的上游 modelVersion。

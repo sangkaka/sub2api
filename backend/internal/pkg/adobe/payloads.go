@@ -212,8 +212,10 @@ func buildNanoBananaPayloads(opts ImagePayloadOptions, normalizedRatio string) [
 	modelSpecific := map[string]any{
 		"parameters": map[string]any{"addWatermark": false},
 	}
-	// 空 / auto / 1:1 不发 aspectRatio：Firefly 默认方图且 schema 默认 1:1。
-	if normalizedRatio != "" && normalizedRatio != "auto" && normalizedRatio != "1:1" {
+	// aspectRatio 必须显式发送（含 1:1）：上游 nano-banana-2/-3 没有「缺省方图」的
+	// 语义，不带该字段时按模型默认比例出图（实测 v2/v3 请求 1024 方图返回 1408x768
+	// 宽图）。空 / auto 才省略。
+	if normalizedRatio != "" && normalizedRatio != "auto" {
 		modelSpecific["aspectRatio"] = normalizedRatio
 	}
 
