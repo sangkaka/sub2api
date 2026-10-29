@@ -155,6 +155,7 @@ type AccountTestService struct {
 	claudeTokenProvider       *ClaudeTokenProvider
 	kiroTokenProvider         *KiroTokenProvider
 	traeTokenProvider         *TraeTokenProvider
+	traeOAuthService          *TraeOAuthService
 	traeClient                *trae.Client
 	grokTokenProvider         *GrokTokenProvider
 	antigravityGatewayService *AntigravityGatewayService

@@ -557,6 +557,15 @@ export default {
         relayApiKeyHint: '该外部上游的 API Key（通过 Authorization: Bearer 发送）',
         relayBaseUrlHint: '承接 fish 原生无法处理的请求（白名单外尺寸 / mask / n>8 / webp）。模型名经渠道映射改写（如 gpt-image-2 → gpt-image-1）。'
       },
+      trae: {
+        refreshTokenLabel: 'TRAE Refresh Token',
+        refreshTokenPlaceholder: '粘贴已登录 Trae CN 账号的 refresh_token',
+        refreshTokenHint: 'Trae CN 登录后的长期刷新令牌（可来自 Trae IDE 本机存储、OAuth 抓包或既有中转导出）。后端经 ExchangeToken 兑换短期 Cloud-IDE-JWT 并自动补全用户身份；建号后跑一次连通性测试可捕获并发槽位。',
+        refreshTokenRequired: '请粘贴 TRAE refresh token',
+        userIdLabel: 'User ID（可选）',
+        userIdPlaceholder: '如 7xxxxxxxxxxxxx',
+        userIdHint: '留空则由 ExchangeToken 响应自动补全。'
+      },
       leonardo: {
         cookieLabel: 'Leonardo Cookie',
         cookieHint: '登录 app.leonardo.ai 后，从浏览器 DevTools（Application → Cookies 或 Network 请求头的 Cookie）复制完整 cookie 串；必须包含 __Secure-better-auth.session_token，分片 session_data.* 建议一并复制。也支持只粘贴裸 session token 值。短期 JWT 由后台自动用该 cookie 换取并保活。',
@@ -599,6 +608,8 @@ export default {
         activeQuery: '查询',
         kiroBonus: 'Bonus',
         leonardoCredits: '积分',
+        traeCredits: 'TRAE 积分',
+        traeParallelLimit: '并发槽位',
         leonardoFast: 'Fast 积分',
         leonardoFastDaily: 'Fast 积分（每日）',
         leonardoRollover: '结转积分',

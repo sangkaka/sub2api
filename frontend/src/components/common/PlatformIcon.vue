@@ -124,6 +124,10 @@
     <rect x="456.7" y="204.1" width="16" height="38" rx="8" />
   </svg>
   <!-- Composite group icon -->
+  <!-- TRAE: 双三角组成的火花标记（品牌识别度优先于写实）。 -->
+  <svg v-else-if="platform === 'trae'" :class="sizeClass" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M3 4.5h18v3.2l-7.2 8.6v4.2H9.4v-4.2L3 7.7V4.5z" />
+  </svg>
   <svg v-else-if="platform === 'composite'" :class="sizeClass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
     <circle cx="6" cy="12" r="3" />
     <circle cx="18" cy="6" r="3" />

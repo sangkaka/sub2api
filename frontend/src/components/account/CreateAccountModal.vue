@@ -333,6 +333,20 @@
             <PlatformIcon platform="fish" size="sm" />
             Fish Audio
           </button>
+          <button
+            type="button"
+            @click="form.platform = 'trae'"
+            :class="[
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
+              form.platform === 'trae'
+                ? 'bg-white text-fuchsia-600 shadow-sm dark:bg-dark-600 dark:text-fuchsia-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+            data-testid="platform-tab-trae"
+          >
+            <PlatformIcon platform="trae" size="sm" />
+            TRAE
+          </button>
         </div>
       </div>
 
@@ -1599,6 +1613,31 @@
           <p class="input-hint">{{ t('admin.accounts.fish.relayApiKeyHint') }}</p>
         </div>
       </div>
+      <!-- TRAE：粘贴 refresh_token（可选 user_id），type 固定 oauth。 -->
+      <div v-if="form.platform === 'trae'" class="space-y-4" data-testid="trae-credential-fields">
+        <div>
+          <label class="input-label">{{ t('admin.accounts.trae.refreshTokenLabel') }}</label>
+          <textarea
+            v-model="traeRefreshToken"
+            rows="3"
+            class="input font-mono text-xs"
+            :placeholder="t('admin.accounts.trae.refreshTokenPlaceholder')"
+            data-testid="trae-refresh-token-input"
+          ></textarea>
+          <p class="input-hint">{{ t('admin.accounts.trae.refreshTokenHint') }}</p>
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.accounts.trae.userIdLabel') }}</label>
+          <input
+            v-model="traeUserId"
+            type="text"
+            class="input font-mono"
+            :placeholder="t('admin.accounts.trae.userIdPlaceholder')"
+            data-testid="trae-user-id-input"
+          />
+          <p class="input-hint">{{ t('admin.accounts.trae.userIdHint') }}</p>
+        </div>
+      </div>
       <!-- Fish 模型白名单 / 映射。token 号和中转号都在第一步设置。 -->
       <div
         v-if="form.platform === 'fish'"
@@ -2483,7 +2522,7 @@
       </div>
 
       <!-- API Key input (only for apikey type, excluding Antigravity / Kiro / Adobe / Leonardo / Fish which have their own fields) -->
-      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity' && form.platform !== 'kiro' && form.platform !== 'adobe' && form.platform !== 'leonardo' && form.platform !== 'fish'" class="space-y-4">
+      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity' && form.platform !== 'kiro' && form.platform !== 'adobe' && form.platform !== 'leonardo' && form.platform !== 'fish' && form.platform !== 'trae'" class="space-y-4">
         <div v-if="!isMultiProtocolPlatform || apiProtocol !== 'adaptive'">
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
@@ -5942,6 +5981,10 @@ const kiroCreateSyncCredentials = computed(() => {
 // Fish 建号：token 原生号（{token}）或 OpenAI 兼容中转号（{base_url, api_key}）。
 const fishAccountMode = ref<'token' | 'relay'>('token')
 const fishToken = ref('')
+// TRAE：粘贴 refresh_token（+可选 user_id）建 OAuth 账号，后端经
+// ExchangeToken 兑换完整凭据（账号测试时补全并发槽位与身份字段）。
+const traeRefreshToken = ref('')
+const traeUserId = ref('')
 const handleFishCreate = async () => {
   if (!form.name.trim()) {
     appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
@@ -5967,6 +6010,34 @@ const handleFishCreate = async () => {
     credentials,
     applyFishMaxQualityToExtra({}, fishMaxQuality.value)
   )
+}
+
+const handleTraeCreate = async () => {
+  if (!form.name.trim()) {
+    appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+    return
+  }
+  const refreshToken = traeRefreshToken.value.trim()
+  if (!refreshToken) {
+    appStore.showError(t('admin.accounts.trae.refreshTokenRequired'))
+    return
+  }
+  const credentials: Record<string, unknown> = {
+    refresh_token: refreshToken
+  }
+  const userId = traeUserId.value.trim()
+  if (userId) {
+    credentials.user_id = userId
+  }
+  const modelMapping = buildModelMappingObject(
+    modelRestrictionMode.value,
+    allowedModels.value,
+    modelMappings.value
+  )
+  if (modelMapping) {
+    credentials.model_mapping = modelMapping
+  }
+  await createAccountAndFinish('trae', 'oauth' as AccountType, credentials)
 }
 
 const handleLeonardoCreate = async () => {
@@ -6319,7 +6390,7 @@ const form = reactive({
 const isOAuthFlow = computed(() => {
   // Leonardo 的长期凭据是浏览器 cookie，没有授权重定向环节（两步建号由
   // needsCredentialStep 单独处理）。
-  if (form.platform === 'leonardo' || form.platform === 'fish') {
+  if (form.platform === 'leonardo' || form.platform === 'fish' || form.platform === 'trae') {
     return false
   }
   // Antigravity upstream 类型不需要 OAuth 流程
@@ -7431,6 +7502,12 @@ const handleSubmit = async () => {
     }
 
     await createAccountAndFinish('leonardo', 'apikey', credentials)
+    return
+  }
+
+  // TRAE：粘贴 refresh_token 单步建号（type=oauth），后端兑换完整凭据。
+  if (form.platform === 'trae') {
+    await handleTraeCreate()
     return
   }
 

@@ -399,8 +399,23 @@
         </div>
       </div>
 
+      <!-- TRAE：粘贴新的 refresh_token，旧 token 由后台刷新器按新 rt 重换。 -->
+      <div v-if="isTrae" class="space-y-4">
+        <div>
+          <label class="input-label">{{ t('admin.accounts.trae.refreshTokenLabel') }}</label>
+          <textarea
+            v-model="traeRefreshToken"
+            rows="3"
+            class="input font-mono text-xs"
+            :placeholder="t('admin.accounts.trae.refreshTokenPlaceholder')"
+            data-testid="reauth-trae-refresh-token-input"
+          ></textarea>
+          <p class="input-hint">{{ t('admin.accounts.trae.refreshTokenHint') }}</p>
+        </div>
+      </div>
+
       <OAuthAuthorizationFlow
-        v-if="!isKiroImportMode && !isAdobe && !isLeonardo"
+        v-if="!isKiroImportMode && !isAdobe && !isLeonardo && !isTrae"
         ref="oauthFlowRef"
         :add-method="addMethod"
         :excel-oauth="isOpenAIBPSOAuth"
@@ -450,6 +465,16 @@
           class="btn btn-primary"
           data-testid="reauth-leonardo-submit"
           @click="handleLeonardoReAuth"
+        >
+          {{ t('common.confirm') }}
+        </button>
+        <button
+          v-else-if="isTrae"
+          type="button"
+          :disabled="!traeRefreshToken.trim()"
+          class="btn btn-primary"
+          data-testid="reauth-trae-submit"
+          @click="handleTraeReAuth"
         >
           {{ t('common.confirm') }}
         </button>
@@ -599,6 +624,7 @@ const kiroImportTokenPlaceholder = computed(() => {
 })
 
 const leonardoCookie = ref('')
+const traeRefreshToken = ref('')
 
 const isOpenAI = computed(() => props.account?.platform === 'openai')
 // BPS-only（BPS OAuth）账号必须用官方 Excel 客户端重新授权，换回的凭据才能继续走 BPS。
@@ -610,6 +636,7 @@ const isAnthropic = computed(() => props.account?.platform === 'anthropic')
 const isAntigravity = computed(() => props.account?.platform === 'antigravity')
 const isKiro = computed(() => props.account?.platform === 'kiro')
 const isLeonardo = computed(() => props.account?.platform === 'leonardo' && props.account?.type === 'oauth')
+const isTrae = computed(() => props.account?.platform === 'trae' && props.account?.type === 'oauth')
 const isGrok = computed(() => props.account?.platform === 'grok')
 const isAdobe = computed(() => props.account?.platform === 'adobe')
 
@@ -882,6 +909,17 @@ const handleLeonardoReAuth = async () => {
     // 只换 cookie；旧 JWT/access_token 留给后台刷新器按新 cookie 重换，
     // 这里清掉可避免「新 cookie + 旧 token」的短暂混用。
     credentials: buildUpdatedCredentials({ cookie, access_token: '', expires_at: '' })
+  })
+}
+
+const handleTraeReAuth = async () => {
+  const refreshToken = traeRefreshToken.value.trim()
+  if (!refreshToken) return
+  await updateAccountCredentials({
+    type: 'oauth',
+    // 只换 refresh_token；旧 token/expires_at 清空，由后台刷新器按新 rt
+    // 立即重换，避免「新 rt + 旧 token」短暂混用。
+    credentials: buildUpdatedCredentials({ refresh_token: refreshToken, token: '', expires_at: '' })
   })
 }
 

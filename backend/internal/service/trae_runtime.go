@@ -95,7 +95,7 @@ func (s *OpenAIGatewayService) forwardTraeChatCompletions(
 		return nil, fmt.Errorf("trae get access token: %w", err)
 	}
 
-	client := s.traeUpstreamClient()
+	client := s.traeClientForAccount(ctx, account)
 	descriptor, err := s.traeModelDescriptor(ctx, client, account, token, upstreamModel)
 	if err != nil {
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
@@ -496,6 +496,18 @@ func (s *OpenAIGatewayService) traeUpstreamClient() *trae.Client {
 	return &trae.Client{}
 }
 
+// traeClientForAccount 返回带账号代理的上游客户端（无 oauth service 时退
+// 回默认端点，测试路径走注入 client）。
+func (s *OpenAIGatewayService) traeClientForAccount(ctx context.Context, account *Account) *trae.Client {
+	if s.traeClient != nil {
+		return s.traeClient
+	}
+	if s.traeOAuthService != nil {
+		return s.traeOAuthService.UpstreamClient(ctx, account)
+	}
+	return &trae.Client{}
+}
+
 func toTraeMessages(messages []apicompat.ChatMessage) []trae.ChatMessage {
 	out := make([]trae.ChatMessage, 0, len(messages))
 	for _, m := range messages {
@@ -538,9 +550,11 @@ func traeUsageToChatUsage(usage *trae.Usage) apicompat.ChatUsage {
 	return out
 }
 
-// SetTraeDeps 注入 TRAE 平台转发依赖（wire 装配时调用一次）。
-func (s *OpenAIGatewayService) SetTraeDeps(tokenProvider *TraeTokenProvider, client *trae.Client) {
+// SetTraeDeps 注入 TRAE 平台转发依赖（wire 装配时调用一次）。client 为
+// 测试注入的端点覆盖；生产路径经 traeOAuthService 按账号解析代理。
+func (s *OpenAIGatewayService) SetTraeDeps(tokenProvider *TraeTokenProvider, oauthService *TraeOAuthService, client *trae.Client) {
 	s.traeTokenProvider = tokenProvider
+	s.traeOAuthService = oauthService
 	if client != nil {
 		s.traeClient = client
 	}

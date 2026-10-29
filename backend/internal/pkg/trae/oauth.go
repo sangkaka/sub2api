@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -21,7 +22,9 @@ type Client struct {
 	RemoteBase string
 	// WebOrigin 覆盖浏览器 Origin/Referer（默认 DefaultWebOrigin）。
 	WebOrigin string
-	// HTTP 用于注入代理/超时；nil 时按需建默认客户端。
+	// ProxyURL 是出站代理地址（http/https/socks5）；空串直连。
+	ProxyURL string
+	// HTTP 用于注入代理/超时；nil 时按 ProxyURL 构建默认客户端。
 	HTTP *http.Client
 }
 
@@ -49,6 +52,13 @@ func (c *Client) webOrigin() string {
 func (c *Client) httpClient() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
+	}
+	if proxyURL := strings.TrimSpace(c.ProxyURL); proxyURL != "" {
+		if parsed, err := url.Parse(proxyURL); err == nil {
+			transport := http.DefaultTransport.(*http.Transport).Clone()
+			transport.Proxy = http.ProxyURL(parsed)
+			return &http.Client{Transport: transport, Timeout: 60 * time.Second}
+		}
 	}
 	return &http.Client{Timeout: 60 * time.Second}
 }

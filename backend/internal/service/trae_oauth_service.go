@@ -18,12 +18,13 @@ import (
 // provider_specific{...}}。
 type TraeOAuthService struct {
 	accountRepo AccountRepository
+	proxyRepo   ProxyRepository
 	// client 可注入替换（测试）；nil 时用默认端点。
 	client *trae.Client
 }
 
-func NewTraeOAuthService(accountRepo AccountRepository) *TraeOAuthService {
-	return &TraeOAuthService{accountRepo: accountRepo}
+func NewTraeOAuthService(accountRepo AccountRepository, proxyRepo ProxyRepository) *TraeOAuthService {
+	return &TraeOAuthService{accountRepo: accountRepo, proxyRepo: proxyRepo}
 }
 
 // SetClient 覆盖上游客户端（测试/自定义端点）。
@@ -34,6 +35,34 @@ func (s *TraeOAuthService) upstreamClient() *trae.Client {
 		return s.client
 	}
 	return &trae.Client{}
+}
+
+// UpstreamClient 返回带账号代理的上游客户端：保留注入客户端的端点覆盖
+// （测试用），按 account.ProxyID 解析出站代理（与 grok/kiro 同语义，账号
+// 未配代理则直连）。
+func (s *TraeOAuthService) UpstreamClient(ctx context.Context, account *Account) *trae.Client {
+	base := s.upstreamClient()
+	out := &trae.Client{
+		APIHost:    base.APIHost,
+		RemoteBase: base.RemoteBase,
+		WebOrigin:  base.WebOrigin,
+		HTTP:       base.HTTP,
+	}
+	if out.HTTP == nil {
+		out.ProxyURL = s.resolveAccountProxyURL(ctx, account)
+	}
+	return out
+}
+
+func (s *TraeOAuthService) resolveAccountProxyURL(ctx context.Context, account *Account) string {
+	if s.proxyRepo == nil || account == nil || account.ProxyID == nil {
+		return ""
+	}
+	proxy, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
+	if err != nil || proxy == nil {
+		return ""
+	}
+	return proxy.URL()
 }
 
 // ExchangeCredentials 仅凭 refresh_token（+可选 user_id）兑换完整凭据。
@@ -58,7 +87,7 @@ func (s *TraeOAuthService) RefreshAccountToken(ctx context.Context, account *Acc
 		return nil, fmt.Errorf("trae account %d has no refresh_token", account.ID)
 	}
 	userID := account.GetCredential("user_id")
-	result, err := s.upstreamClient().ExchangeToken(ctx, refreshToken, userID)
+	result, err := s.UpstreamClient(ctx, account).ExchangeToken(ctx, refreshToken, userID)
 	if err != nil {
 		return nil, err
 	}

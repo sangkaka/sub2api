@@ -78,7 +78,7 @@ func newTraeTestGateway(t *testing.T, upstream *httptest.Server) *OpenAIGatewayS
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{}
 	provider := NewTraeTokenProvider(nil, nil, nil)
-	svc.SetTraeDeps(provider, &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1"})
+	svc.SetTraeDeps(provider, nil, &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1"})
 	return svc
 }
 
@@ -166,7 +166,7 @@ func TestForwardTraeChatCompletionsRateLimit(t *testing.T) {
 	repo := &traeRateLimitRepo{mockAccountRepoForGemini: &mockAccountRepoForGemini{}}
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{}
-	svc.SetTraeDeps(NewTraeTokenProvider(nil, nil, nil), &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1"})
+	svc.SetTraeDeps(NewTraeTokenProvider(nil, nil, nil), nil, &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1"})
 
 	body, _ := json.Marshal(map[string]any{
 		"model":    "GLM-5.3",
@@ -229,7 +229,7 @@ func TestTestTraeAccountConnection(t *testing.T) {
 
 	repo := &traeRateLimitRepo{mockAccountRepoForGemini: &mockAccountRepoForGemini{}}
 	svc := &AccountTestService{accountRepo: repo}
-	svc.SetTraeTokenProvider(NewTraeTokenProvider(nil, nil, nil), &trae.Client{
+	svc.SetTraeTokenProvider(NewTraeTokenProvider(nil, nil, nil), nil, &trae.Client{
 		APIHost:    apiServer.URL,
 		RemoteBase: remoteServer.URL + "/api/remote/v1",
 	})

@@ -901,6 +901,31 @@
     </template>
 
     <!-- Other accounts: no usage window -->
+    <!-- TRAE OAuth 号：entitlement 积分余额 + 并发槽位。 -->
+    <template v-else-if="isTraeUsageAccount">
+      <div v-if="loading" class="space-y-1.5">
+        <div class="h-4 w-24 animate-pulse rounded bg-gray-200 dark:bg-gray-700"></div>
+        <div class="h-1.5 w-32 animate-pulse rounded-full bg-gray-200 dark:bg-gray-700"></div>
+      </div>
+      <div v-else-if="error" class="text-xs text-red-500">
+        {{ error }}
+      </div>
+      <div v-else-if="usageInfo?.trae_credits" class="space-y-2" data-testid="trae-usage">
+        <div class="space-y-1" data-testid="trae-credits">
+          <div class="flex items-baseline justify-between gap-2 text-[11px] text-gray-600 dark:text-gray-300">
+            <span class="font-medium tracking-[0.01em]">{{ t('admin.accounts.usageWindow.traeCredits') }}</span>
+            <span class="font-semibold tabular-nums text-gray-700 dark:text-gray-200">{{ formatKiroAmount(usageInfo.trae_credits.current_usage) }} / {{ formatKiroAmount(usageInfo.trae_credits.usage_limit) }}</span>
+          </div>
+          <div class="h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+            <div class="h-full rounded-full bg-fuchsia-500 transition-all" :style="{ width: `${traeCreditPercent}%` }"></div>
+          </div>
+        </div>
+        <div v-if="usageInfo?.trae_parallel_limit" class="text-[11px] text-gray-500 dark:text-gray-400" data-testid="trae-parallel-limit">
+          {{ t('admin.accounts.usageWindow.traeParallelLimit') }}: {{ usageInfo.trae_parallel_limit }}
+        </div>
+      </div>
+      <div v-else class="text-xs text-gray-400">-</div>
+    </template>
     <template v-else>
       <div class="text-xs text-gray-400">-</div>
     </template>
@@ -1905,6 +1930,11 @@ const fishUsageAvailable = computed(() =>
   !!(usageInfo.value?.fish_credits || usageInfo.value?.fish_daily || usageInfo.value?.fish_plan)
 )
 const fishCreditPercent = computed(() => clampPercent(usageInfo.value?.fish_credits?.percentage_used))
+
+const isTraeUsageAccount = computed(() =>
+  props.account?.platform === 'trae' && props.account?.type === 'oauth'
+)
+const traeCreditPercent = computed(() => clampPercent(usageInfo.value?.trae_credits?.percentage_used))
 const fishDailyPercent = computed(() => clampPercent(usageInfo.value?.fish_daily?.percentage_used))
 const fishPlanLabel = computed(() => {
   const plan = (usageInfo.value?.fish_plan || '').trim()

@@ -443,9 +443,9 @@ func ProvideGrokTokenProvider(
 }
 
 // ProvideTraeOAuthService creates TraeOAuthService (account repo for refresh
-// rotation validation).
-func ProvideTraeOAuthService(accountRepo AccountRepository) *TraeOAuthService {
-	return NewTraeOAuthService(accountRepo)
+// rotation validation, proxy repo for per-account outbound proxies).
+func ProvideTraeOAuthService(accountRepo AccountRepository, proxyRepo ProxyRepository) *TraeOAuthService {
+	return NewTraeOAuthService(accountRepo, proxyRepo)
 }
 
 // ProvideTraeTokenProvider creates TraeTokenProvider with OAuthRefreshAPI

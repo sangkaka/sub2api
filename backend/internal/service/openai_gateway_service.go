@@ -471,6 +471,7 @@ type OpenAIGatewayService struct {
 	// TRAE 私有协议平台的转发依赖（token 获取/上游客户端/模型目录缓存），
 	// 经 SetTraeDeps 注入；未注入时 TRAE 分支返回未配置错误。
 	traeTokenProvider     *TraeTokenProvider
+	traeOAuthService      *TraeOAuthService
 	traeClient            *traepkg.Client
 	traeCatalog           *traeRuntimeCatalog
 	toolCorrector         *CodexToolCorrector

@@ -32,11 +32,11 @@
 
 ## 2. PR-2 前端与用量
 
-- [ ] 2.1 `CreateAccountModal.vue` trae 平台 tab：粘贴 refresh_token（+可选 user_id），
+- [x] 2.1 `CreateAccountModal.vue` trae 平台 tab：粘贴 refresh_token（+可选 user_id），
       提交即走后端兑换；ReAuthAccountModal 重授权（粘贴新 refresh_token）。
-- [ ] 2.2 PlatformIcon / platformColors / i18n（zh+en）。
-- [ ] 2.3 `api/admin/trae.ts` + composable；账号列表显示积分（ide_user_ent_usage 映射）。
-- [ ] 2.4 模型目录同步按钮（sync-upstream 已有机制接 catalog 拉取）。
+- [x] 2.2 PlatformIcon / platformColors / i18n（zh+en）。
+- [x] 2.3 账号列表显示积分（ide_user_ent_usage 映射；建号/重授权走通用 accounts API，无需独立 trae 端点）。
+- [x] 2.4 模型目录同步按钮（sync-upstream 已有机制接 catalog 拉取）。
 
 ## 3. PR-3 增强（按需，逐项独立）
 

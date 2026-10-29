@@ -12,8 +12,9 @@ import (
 
 // SetTraeTokenProvider 注入 TRAE token provider 与可选上游客户端（wire 装配
 // 时调用；client 为 nil 用默认端点，测试注入 httptest 端点）。
-func (s *AccountTestService) SetTraeTokenProvider(provider *TraeTokenProvider, client *trae.Client) {
+func (s *AccountTestService) SetTraeTokenProvider(provider *TraeTokenProvider, oauthService *TraeOAuthService, client *trae.Client) {
 	s.traeTokenProvider = provider
+	s.traeOAuthService = oauthService
 	if client != nil {
 		s.traeClient = client
 	}
@@ -22,6 +23,18 @@ func (s *AccountTestService) SetTraeTokenProvider(provider *TraeTokenProvider, c
 func (s *AccountTestService) traeUpstreamClient() *trae.Client {
 	if s.traeClient != nil {
 		return s.traeClient
+	}
+	return &trae.Client{}
+}
+
+// traeClientForAccount 优先测试注入的端点覆盖，生产经 oauth service 按账号
+// 解析代理。
+func (s *AccountTestService) traeClientForAccount(ctx context.Context, account *Account) *trae.Client {
+	if s.traeClient != nil {
+		return s.traeClient
+	}
+	if s.traeOAuthService != nil {
+		return s.traeOAuthService.UpstreamClient(ctx, account)
 	}
 	return &trae.Client{}
 }
@@ -38,7 +51,7 @@ func (s *AccountTestService) testTraeAccountConnection(c *gin.Context, account *
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to get TRAE token: %s", err.Error()))
 	}
 
-	client := s.traeUpstreamClient()
+	client := s.traeClientForAccount(ctx, account)
 	userInfo, err := client.GetUserInfo(ctx, token)
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("GetUserInfo failed: %s", err.Error()))

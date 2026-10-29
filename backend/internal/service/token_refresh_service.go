@@ -215,7 +215,7 @@ func (s *TokenRefreshService) RegisterTraeRefresher(traeOAuthService *TraeOAuthS
 	}
 	refresher := NewTraeTokenRefresher(traeOAuthService)
 	s.registrations = append(s.registrations, tokenRefreshRegistration{
-		platform: PlatformTrae,
+		platform:  PlatformTrae,
 		refresher: refresher,
 		executor:  refresher,
 	})
