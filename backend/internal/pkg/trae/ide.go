@@ -144,7 +144,9 @@ func buildIDEChatBody(req IDEChatRequest) ([]byte, error) {
 		body["max_tokens"] = req.MaxTokens
 	}
 	if len(req.Tools) > 0 {
-		body["tools"] = req.Tools
+		// 上游 FunctionDefinition 要求 parameters 为 JSON 字符串（SOLO 编码，
+		// 实测对象形报 4001 "cannot unmarshal object ... of type string"）。
+		body["tools"] = ideToolDefinitions(req.Tools)
 		if req.ToolChoice != nil {
 			body["tool_choice"] = req.ToolChoice
 		}
@@ -153,6 +155,35 @@ func buildIDEChatBody(req IDEChatRequest) ([]byte, error) {
 		}
 	}
 	return json.Marshal(body)
+}
+
+// ideToolDefinitions 把 OpenAI 工具定义转换为 llm_utils_chat 的原生形状：
+// parameters 序列化为字符串，其余字段原样。
+func ideToolDefinitions(tools []ToolDefinition) []map[string]any {
+	out := make([]map[string]any, 0, len(tools))
+	for _, tool := range tools {
+		var fn struct {
+			Name        string          `json:"name"`
+			Description string          `json:"description"`
+			Parameters  json.RawMessage `json:"parameters"`
+		}
+		if err := json.Unmarshal(tool.Function, &fn); err != nil || fn.Name == "" {
+			continue
+		}
+		definition := map[string]any{"name": fn.Name}
+		if fn.Description != "" {
+			definition["description"] = fn.Description
+		}
+		if len(fn.Parameters) > 0 {
+			definition["parameters"] = string(fn.Parameters)
+		}
+		kind := strings.TrimSpace(tool.Type)
+		if kind == "" {
+			kind = "function"
+		}
+		out = append(out, map[string]any{"type": kind, "function": definition})
+	}
+	return out
 }
 
 // toIDEWireMessages 把 OpenAI 形消息转换为 llm_utils_chat 的结构化消息：

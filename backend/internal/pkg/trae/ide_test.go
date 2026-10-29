@@ -51,7 +51,7 @@ func TestIDEChatWire(t *testing.T) {
 		ConfigName:        "kimi-k3.1-pro",
 		UserID:            "433084928",
 		MaxTokens:         500,
-		Tools:             []ToolDefinition{{Type: "function", Function: json.RawMessage(`{"name":"f","parameters":{}}`)}},
+		Tools:             []ToolDefinition{{Type: "function", Function: json.RawMessage(`{"name":"f","description":"do f","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}`)}},
 		ToolChoice:        json.RawMessage(`"auto"`),
 		ParallelToolCalls: &parallel,
 	})
@@ -92,6 +92,11 @@ func TestIDEChatWire(t *testing.T) {
 	require.Equal(t, float64(500), gotBody["max_tokens"])
 	require.Equal(t, "auto", gotBody["tool_choice"])
 	require.Equal(t, true, gotBody["parallel_tool_calls"])
+	// parameters 必须是 JSON 字符串（SOLO 编码）。
+	tools := gotBody["tools"].([]any)
+	fn := tools[0].(map[string]any)["function"].(map[string]any)
+	require.IsType(t, "", fn["parameters"])
+	require.Contains(t, fn["parameters"], "\"type\":\"object\"")
 	messages := gotBody["messages"].([]any)
 	require.Len(t, messages, 3)
 	first := messages[0].(map[string]any)
