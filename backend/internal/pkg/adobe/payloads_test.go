@@ -215,9 +215,10 @@ func TestBuildImagePayloadCandidatesNanoBananaFourKFiveFour(t *testing.T) {
 	require.NotContains(t, p, "skipCai")
 }
 
-// 没给比例（或给了 auto）时不应凭空补一个 aspectRatio。
+// 没给比例（或给了 auto）时不凭空补 aspectRatio；显式比例（含 1:1）必须带上——
+// 上游 nano-banana-2/-3 没有「缺省方图」语义，漏发会按模型默认比例出宽图。
 func TestBuildImagePayloadCandidatesNanoBananaOmitsAspectRatio(t *testing.T) {
-	for _, ratio := range []string{"", "auto", "  ", "AUTO", "1:1"} {
+	for _, ratio := range []string{"", "auto", "  ", "AUTO"} {
 		candidates, err := BuildImagePayloadCandidates(ImagePayloadOptions{
 			Prompt:           "x",
 			AspectRatio:      ratio,
@@ -230,6 +231,17 @@ func TestBuildImagePayloadCandidatesNanoBananaOmitsAspectRatio(t *testing.T) {
 		require.NotContains(t, msp, "aspectRatio", "ratio=%q 不应带 aspectRatio", ratio)
 		require.Equal(t, Size{1024, 1024}, candidates[0]["size"])
 	}
+
+	candidates, err := BuildImagePayloadCandidates(ImagePayloadOptions{
+		Prompt:           "x",
+		AspectRatio:      "1:1",
+		UpstreamModelID:  "gemini-flash",
+		PayloadKind:      PayloadKindNanoBanana,
+		OutputResolution: Resolution1K,
+	})
+	require.NoError(t, err)
+	msp := candidates[0]["modelSpecificPayload"].(map[string]any)
+	require.Equal(t, "1:1", msp["aspectRatio"], "1:1 也必须显式发送")
 }
 
 func TestBuildImagePayloadCandidatesNanoBananaEdit(t *testing.T) {

@@ -415,7 +415,9 @@ func TestAdobeImageServiceBananaEmptySizeIs1K(t *testing.T) {
 	require.Equal(t, float64(1024), size["width"])
 	require.Equal(t, float64(1024), size["height"])
 	msp := submitted["modelSpecificPayload"].(map[string]any)
-	require.NotContains(t, msp, "aspectRatio")
+	// 上游 nano-banana-2/-3 没有「缺省方图」语义，默认方图也必须显式发 1:1，
+	// 否则按模型默认比例出宽图。
+	require.Equal(t, "1:1", msp["aspectRatio"])
 }
 
 func TestAdobeImageServiceReturnsB64WithoutStorage(t *testing.T) {
