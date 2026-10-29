@@ -128,6 +128,7 @@ func ProvideTokenRefreshService(
 	antigravityOAuthService *AntigravityOAuthService,
 	kiroOAuthService *KiroOAuthService,
 	grokOAuthService *GrokOAuthService,
+	traeOAuthService *TraeOAuthService,
 	cacheInvalidator TokenCacheInvalidator,
 	schedulerCache SchedulerCache,
 	cfg *config.Config,
@@ -145,6 +146,8 @@ func ProvideTokenRefreshService(
 	// 调用侧显式注入后台刷新策略，避免策略漂移
 	svc.SetRefreshPolicy(DefaultBackgroundRefreshPolicy())
 	svc.SetAccountRuntimeBlocker(runtimeBlocker)
+	// TRAE 双轨刷新：后台扫描注册进统一注册表。
+	svc.RegisterTraeRefresher(traeOAuthService)
 	svc.Start()
 	return svc
 }
@@ -436,6 +439,40 @@ func ProvideGrokTokenProvider(
 	p.SetRefreshAPI(refreshAPI, executor)
 	p.SetRefreshPolicy(GrokProviderRefreshPolicy())
 	p.SetTempUnschedCache(tempUnschedCache)
+	return p
+}
+
+// ProvideTraeOAuthService creates TraeOAuthService (account repo for refresh
+// rotation validation, proxy repo for per-account outbound proxies).
+func ProvideTraeOAuthService(accountRepo AccountRepository, proxyRepo ProxyRepository) *TraeOAuthService {
+	return NewTraeOAuthService(accountRepo, proxyRepo)
+}
+
+// ProvideTraeCheckinService creates and starts the TRAE daily checkin
+// automation (opt-in per account via credentials auto_checkin=true).
+func ProvideTraeCheckinService(
+	accountRepo AccountRepository,
+	traeOAuthService *TraeOAuthService,
+	traeTokenProvider *TraeTokenProvider,
+) *TraeCheckinService {
+	svc := NewTraeCheckinService(accountRepo, traeOAuthService, traeTokenProvider)
+	svc.Start()
+	return svc
+}
+
+// ProvideTraeTokenProvider creates TraeTokenProvider with OAuthRefreshAPI
+// injection and returns it together with its refresh executor so the token
+// refresh service can register the same refresher.
+func ProvideTraeTokenProvider(
+	accountRepo AccountRepository,
+	tokenCache GeminiTokenCache,
+	traeOAuthService *TraeOAuthService,
+	refreshAPI *OAuthRefreshAPI,
+) *TraeTokenProvider {
+	p := NewTraeTokenProvider(accountRepo, tokenCache, traeOAuthService)
+	executor := NewTraeTokenRefresher(traeOAuthService)
+	p.SetRefreshAPI(refreshAPI, executor)
+	p.SetRefreshPolicy(GeminiProviderRefreshPolicy())
 	return p
 }
 

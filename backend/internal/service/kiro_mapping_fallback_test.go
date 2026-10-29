@@ -170,16 +170,16 @@ func TestGatewayServiceCalculateTokenCost_KiroAutoUsesConservativeFallback(t *te
 		nil,                         // leonardoTokenProvider
 		nil,                         // kiroCooldownStore
 		nil,                         // kiroCacheEmulationRemote
-		nil, // sessionLimitCache
-		nil, // rpmCache
-		nil, // digestStore
-		nil, // settingService
-		nil, // tlsFPProfileService
-		nil, // channelService
-		nil, // resolver
-		nil, // compositeResolver
-		nil, // balanceNotifyService
-		nil, // userPlatformQuotaRepo
+		nil,                         // sessionLimitCache
+		nil,                         // rpmCache
+		nil,                         // digestStore
+		nil,                         // settingService
+		nil,                         // tlsFPProfileService
+		nil,                         // channelService
+		nil,                         // resolver
+		nil,                         // compositeResolver
+		nil,                         // balanceNotifyService
+		nil,                         // userPlatformQuotaRepo
 	)
 
 	result := &ForwardResult{
@@ -336,5 +336,5 @@ func newKiroBillingGatewayForTest(t *testing.T) *GatewayService {
 	t.Helper()
 	cfg := &config.Config{}
 	cfg.Default.RateMultiplier = 1.1
-return NewGatewayService(nil, nil, nil, nil, nil, nil, nil, nil, cfg, nil, nil, NewBillingService(cfg, nil), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	return NewGatewayService(nil, nil, nil, nil, nil, nil, nil, nil, cfg, nil, nil, NewBillingService(cfg, nil), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }

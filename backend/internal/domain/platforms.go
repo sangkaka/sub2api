@@ -53,6 +53,9 @@ var platformList = []PlatformSpec{
 	{ID: PlatformCline, DisplayName: "Cline", Gateway: PlatformGatewayOpenAI},
 	{ID: PlatformLeonardo, DisplayName: "Leonardo", Gateway: PlatformGatewayAnthropic},
 	{ID: PlatformFish, DisplayName: "Fish Audio", Gateway: PlatformGatewayOpenAI},
+	// TRAE：Cloud-IDE-JWT OAuth + Remote chat_sessions 私有协议，由 OpenAI 网关的
+	// TRAE 专用 runtime 翻译转发；非 CNProvider（无厂商余额探测），模型目录从上游拉取。
+	{ID: PlatformTrae, DisplayName: "TRAE", Gateway: PlatformGatewayOpenAI},
 }
 
 var platformIndex = func() map[string]int {

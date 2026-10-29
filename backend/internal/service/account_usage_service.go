@@ -133,10 +133,10 @@ const (
 
 // UsageCache 封装账户使用量相关的缓存
 type UsageCache struct {
-	apiCache          sync.Map           // accountID -> *apiUsageCache
-	windowStatsCache  sync.Map           // accountID -> *windowStatsCache
-	antigravityCache  sync.Map           // accountID -> *antigravityUsageCache
-	kiroUsageCache    sync.Map           // accountID -> *kiroUsageCache
+	apiCache            sync.Map           // accountID -> *apiUsageCache
+	windowStatsCache    sync.Map           // accountID -> *windowStatsCache
+	antigravityCache    sync.Map           // accountID -> *antigravityUsageCache
+	kiroUsageCache      sync.Map           // accountID -> *kiroUsageCache
 	adobeUsageCache     sync.Map           // accountID -> *adobeUsageCache
 	leonardoUsageCache  sync.Map           // accountID -> *leonardoUsageCache
 	fishUsageCache      sync.Map           // accountID -> *fishUsageCache
@@ -212,6 +212,13 @@ type FishCreditProgress struct {
 	PercentageUsed float64 `json:"percentage_used"`
 }
 
+// TraeCreditProgress 表示 TRAE 积分包的用量进度。
+type TraeCreditProgress struct {
+	CurrentUsage   float64 `json:"current_usage"`
+	UsageLimit     float64 `json:"usage_limit"`
+	PercentageUsed float64 `json:"percentage_used"`
+}
+
 // KiroCreditProgress 表示 Kiro 主额度或 Bonus 的用量进度。
 type KiroCreditProgress struct {
 	CurrentUsage   float64    `json:"current_usage"`
@@ -282,6 +289,10 @@ type UsageInfo struct {
 
 	// Antigravity 废弃模型转发规则 (old_model_id -> new_model_id)
 	ModelForwardingRules map[string]string `json:"model_forwarding_rules,omitempty"`
+
+	// TRAE 积分余额快照（entitlement product_type=2 积分包汇总）与并发槽位。
+	TraeCredits       *TraeCreditProgress `json:"trae_credits,omitempty"`
+	TraeParallelLimit int                 `json:"trae_parallel_limit,omitempty"`
 
 	// Fish token 号：钱包已用/总额进度，以及每日出图窗口。套餐名写入 FishPlan，
 	// 由账号列表写进 credentials.plan_type 后在平台/类型列展示。
@@ -386,23 +397,25 @@ type KiroUsageTokenProvider interface {
 
 // AccountUsageService 账号使用量查询服务
 type AccountUsageService struct {
-	accountRepo             AccountRepository
-	usageLogRepo            UsageLogRepository
-	usageFetcher            ClaudeUsageFetcher
-	geminiQuotaService      *GeminiQuotaService
-	antigravityQuotaFetcher *AntigravityQuotaFetcher
-	kiroTokenProvider       KiroUsageTokenProvider
-	grokQuotaFetcher        *GrokQuotaFetcher
-	grokQuotaService        *GrokQuotaService
-	openAIQuotaService      *OpenAIQuotaService
-	cache                   *UsageCache
-	identityCache           IdentityCache
-	tlsFPProfileService     *TLSFingerprintProfileService
-	kiroCooldownStore       KiroCooldownStore
+	accountRepo                 AccountRepository
+	usageLogRepo                UsageLogRepository
+	usageFetcher                ClaudeUsageFetcher
+	geminiQuotaService          *GeminiQuotaService
+	antigravityQuotaFetcher     *AntigravityQuotaFetcher
+	kiroTokenProvider           KiroUsageTokenProvider
+	grokQuotaFetcher            *GrokQuotaFetcher
+	grokQuotaService            *GrokQuotaService
+	openAIQuotaService          *OpenAIQuotaService
+	cache                       *UsageCache
+	identityCache               IdentityCache
+	tlsFPProfileService         *TLSFingerprintProfileService
+	kiroCooldownStore           KiroCooldownStore
 	agentIdentityTaskMu         sync.Mutex
 	agentIdentityWS             agentIdentityWSConnectionInvalidator
 	adobeTokenProvider          *AdobeTokenProvider
 	sharedLeonardoTokenProvider *LeonardoTokenProvider
+	traeTokenProvider           *TraeTokenProvider
+	traeOAuthService            *TraeOAuthService
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
@@ -523,6 +536,10 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
 		return usage, err
+	}
+
+	if account.Platform == PlatformTrae {
+		return s.getTraeUsage(ctx, account, forceProbe)
 	}
 
 	if account.Platform == PlatformGrok {

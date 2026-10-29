@@ -298,6 +298,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       'Adobe',
       'Leonardo',
       'Fish Audio',
+      'TRAE',
     ])
   })
 
@@ -743,7 +744,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       .get('[data-tour="account-form-platform"]')
       .findAll('button')
       .map((button) => button.text().trim())
-    expect(labels.slice(-6)).toEqual(['Command Code', 'Cline', 'Kiro', 'Adobe', 'Leonardo', 'Fish Audio'])
+    expect(labels.slice(-7)).toEqual(['Command Code', 'Cline', 'Kiro', 'Adobe', 'Leonardo', 'Fish Audio', 'TRAE'])
     expect(labels.slice(5, 10)).toEqual(['TypeSafe / Jev', 'Kimi', 'Zhipu GLM', 'DeepSeek', 'MiniMax'])
   })
 

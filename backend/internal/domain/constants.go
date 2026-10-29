@@ -47,7 +47,11 @@ const (
 	PlatformLeonardo = "leonardo"
 	// PlatformFish 是 fish.audio 图片生成平台（OpenAI Images 兼容端点；
 	// 账号为网页会话 Bearer token，直连 api.fish.audio 的 image-video 工具协议）。
-	PlatformFish      = "fish"
+	PlatformFish = "fish"
+	// PlatformTrae 是 Trae CN 平台（Cloud-IDE-JWT OAuth 账号，Remote 私有协议
+	// chat_sessions 两步会话，对用户暴露 OpenAI Chat Completions 形状）。
+	PlatformTrae = "trae"
+	// PlatformComposite 是组合分组的虚拟平台标识。
 	PlatformComposite = "composite"
 )
 

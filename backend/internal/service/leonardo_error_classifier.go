@@ -304,4 +304,3 @@ func leonardoResultUnavailableFailure(cause error) *UpstreamFailoverError {
 		NextAccountAction: NextAccountStop,
 	}
 }
-

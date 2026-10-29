@@ -7,7 +7,7 @@ import (
 )
 
 // 重构前各处手写的平台列表，作为平台清单派生结果的等价基准；重构后新登记的平台
-// （Command Code、Cline、Leonardo、Fish）按同类平台的位置补入。
+// （Command Code、Cline、Leonardo、Fish、TRAE）按同类平台的位置补入。
 var (
 	legacyDisplayOrder = []string{
 		PlatformAnthropic, PlatformOpenAI, PlatformGemini, PlatformAntigravity, PlatformKiro, PlatformGrok, PlatformAdobe,
@@ -16,6 +16,7 @@ var (
 		PlatformCline,
 		PlatformLeonardo,
 		PlatformFish,
+		PlatformTrae,
 	}
 	legacyCompositePrecedence = []string{
 		PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformKiro, PlatformGrok, PlatformAdobe,
@@ -24,12 +25,14 @@ var (
 		PlatformCline,
 		PlatformLeonardo,
 		PlatformFish,
+		PlatformTrae,
 	}
 	legacyOpenAIGateway = []string{
 		PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo,
 		PlatformCommandCode,
 		PlatformCline,
 		PlatformFish,
+		PlatformTrae,
 	}
 	legacyCNProviders    = []string{PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax}
 	legacyLiteLLMByPlatf = map[string]string{
@@ -39,7 +42,8 @@ var (
 		PlatformOpenCodeGo: "opencode-go", PlatformTypeSafe: "typesafe", PlatformCommandCode: "", PlatformCline: "",
 		PlatformKiro: "", PlatformAdobe: "",
 		PlatformLeonardo: "",
-		PlatformFish:     "",
+		PlatformFish: "",
+		PlatformTrae:  "",
 	}
 )
 
@@ -79,4 +83,25 @@ func TestPlatformsReturnsCopy(t *testing.T) {
 	platforms := Platforms()
 	platforms[0].ID = "mutated"
 	require.Equal(t, PlatformAnthropic, Platforms()[0].ID)
+}
+
+// TRAE 是 OpenAI 网关族的私有协议平台：不参与 CN 供应商余额能力，也不从
+// LiteLLM 定价目录同步（模型目录按账号从上游拉取），登记位置在清单尾部。
+func TestTraePlatformRegistration(t *testing.T) {
+	require.True(t, IsConcretePlatform(PlatformTrae))
+	require.True(t, IsGroupPlatform(PlatformTrae))
+	require.True(t, UsesOpenAIGateway(PlatformTrae))
+
+	spec, ok := LookupPlatform(PlatformTrae)
+	require.True(t, ok)
+	require.Equal(t, "TRAE", spec.DisplayName)
+	require.False(t, spec.CNProvider)
+	require.Empty(t, spec.LiteLLMProvider)
+
+	ids := ConcretePlatformIDs()
+	require.Equal(t, PlatformTrae, ids[len(ids)-1], "trae must be registered at the tail")
+	precedence := CompositePrecedencePlatformIDs()
+	require.Equal(t, PlatformTrae, precedence[len(precedence)-1], "trae must be appended at composite precedence tail")
+	require.Equal(t, []string{PlatformAnthropic, PlatformGemini, PlatformOpenAI}, precedence[:3],
+		"composite precedence fixed prefix must stay unchanged")
 }

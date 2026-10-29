@@ -101,12 +101,12 @@ describe('UserPlatformQuotaModal', () => {
     expect(apiMocks.getPlatformQuotas).toHaveBeenCalledWith(99)
   })
 
-  it('renders all 17 supported platforms with empty limits', async () => {
+  it('renders all 18 supported platforms with empty limits', async () => {
     const w = await mountAndOpen()
     const rows = w.findAll('tbody tr')
     expect(rows.map(row => row.find('td').text())).toEqual([
       'anthropic', 'openai', 'gemini', 'antigravity', 'kiro', 'grok', 'adobe',
-      'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go', 'typesafe', 'command_code', 'cline', 'leonardo', 'fish',
+      'kimi', 'zhipu', 'deepseek', 'minimax', 'opencode_go', 'typesafe', 'command_code', 'cline', 'leonardo', 'fish', 'trae',
     ])
     for (const row of rows) {
       const inputs = row.findAll('input[type=number]')
@@ -137,7 +137,7 @@ describe('UserPlatformQuotaModal', () => {
         : item)
       expect(apiMocks.updatePlatformQuotas).toHaveBeenCalledTimes(1)
       expect(apiMocks.updatePlatformQuotas).toHaveBeenCalledWith(99, expect.arrayContaining(expected))
-      expect(apiMocks.updatePlatformQuotas.mock.calls[0][1]).toHaveLength(17)
+      expect(apiMocks.updatePlatformQuotas.mock.calls[0][1]).toHaveLength(18)
       expect(w.emitted('success')).toHaveLength(1)
       w.unmount()
     },
@@ -152,8 +152,8 @@ describe('UserPlatformQuotaModal', () => {
     })
     const w = await mountAndOpen()
     const inputs = w.findAll('input[type=number]')
-    // 17 platforms × 3 windows = 51 inputs
-    expect(inputs.length).toBe(51)
+    // 18 platforms × 3 windows = 54 inputs
+    expect(inputs.length).toBe(54)
     // 第一个 input 是 anthropic.daily = 10
     expect((inputs[0].element as HTMLInputElement).value).toBe('10')
   })
@@ -175,7 +175,7 @@ describe('UserPlatformQuotaModal', () => {
     expect(apiMocks.updatePlatformQuotas).toHaveBeenCalledTimes(1)
     const [uid, payload] = apiMocks.updatePlatformQuotas.mock.calls[0]
     expect(uid).toBe(99)
-    expect(payload).toHaveLength(17) // all supported platforms always submitted
+    expect(payload).toHaveLength(18) // all supported platforms always submitted
     const openai = payload.find((p: any) => p.platform === 'openai')
     expect(openai.weekly_limit_usd).toBe(20)
   })
@@ -249,7 +249,7 @@ describe('UserPlatformQuotaModal', () => {
   it('未配置限额的平台重置按钮禁用并提示不可用', async () => {
     const w = await mountAndOpen()
     const resetBtns = w.findAll('button').filter((b) => b.text() === '↻')
-    expect(resetBtns.length).toBe(51) // 17 platforms × 3 windows
+    expect(resetBtns.length).toBe(54) // 18 platforms × 3 windows
     for (const b of resetBtns) {
       expect((b.element as HTMLButtonElement).disabled).toBe(true)
       expect(b.attributes('title')).toBe('admin.users.platformQuota.reset.unavailable')

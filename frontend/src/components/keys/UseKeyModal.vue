@@ -1345,7 +1345,8 @@ function generateRoutedCodexFiles(
     typesafe: 'TypeSafe / Jev',
     command_code: 'Command Code',
     cline: 'Cline',
-    composite: 'Composite'
+    composite: 'Composite',
+    trae: 'TRAE'
   }
   const label = labels[platform]
   const envContent = isWindows

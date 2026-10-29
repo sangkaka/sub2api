@@ -10,7 +10,7 @@ import (
 )
 
 // 以下为重构前各处手写的平台列表 / switch，作为平台清单派生结果的等价基准；
-// 重构后新登记的平台（Command Code、Cline）按同类平台（OpenCode）的位置补入。
+// 重构后新登记的平台（Command Code、Cline、TRAE）按同类平台的位置补入。
 var (
 	legacyAllPlatforms = []string{
 		PlatformAnthropic, PlatformOpenAI, PlatformGemini, PlatformAntigravity, PlatformKiro, PlatformGrok, PlatformAdobe,
@@ -19,6 +19,7 @@ var (
 		PlatformCline,
 		PlatformLeonardo,
 		PlatformFish,
+		PlatformTrae,
 	}
 	legacySchedulerSnapshotPlatforms = []string{
 		PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformKiro, PlatformGrok, PlatformAdobe,
@@ -27,6 +28,7 @@ var (
 		PlatformCline,
 		PlatformLeonardo,
 		PlatformFish,
+		PlatformTrae,
 	}
 	legacyCompositeMatchingPlatforms = legacySchedulerSnapshotPlatforms
 	legacyMultiProtocolProviders     = []string{PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformCommandCode, PlatformCline}
@@ -43,12 +45,12 @@ func legacyIsCNProvider(platform string) bool {
 }
 
 func legacyIsOpenAICompatible(platform string) bool {
-	return platform == PlatformOpenAI || platform == PlatformGrok || platform == PlatformFish || legacyIsCNProvider(platform) || platform == PlatformOpenCodeGo || platform == PlatformCommandCode || platform == PlatformCline
+	return platform == PlatformOpenAI || platform == PlatformGrok || platform == PlatformFish || platform == PlatformTrae || legacyIsCNProvider(platform) || platform == PlatformOpenCodeGo || platform == PlatformCommandCode || platform == PlatformCline
 }
 
 func legacyNormalizeOpenAICompatiblePlatform(platform string) string {
 	switch platform {
-	case PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformCommandCode, PlatformCline, PlatformFish:
+	case PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformCommandCode, PlatformCline, PlatformFish, PlatformTrae:
 		return platform
 	}
 	return PlatformOpenAI
@@ -62,7 +64,7 @@ func legacyIsUpstreamBillingProbeIdentity(platform, accountType string) bool {
 	case PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformAntigravity, PlatformGrok,
 		PlatformKiro, PlatformAdobe,
 		PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo,
-		PlatformTypeSafe, PlatformCommandCode, PlatformCline, PlatformLeonardo, PlatformFish:
+		PlatformTypeSafe, PlatformCommandCode, PlatformCline, PlatformLeonardo, PlatformFish, PlatformTrae:
 		return true
 	}
 	return false

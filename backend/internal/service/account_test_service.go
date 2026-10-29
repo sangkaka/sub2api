@@ -33,6 +33,7 @@ import (
 	kiropkg "github.com/Wei-Shaw/sub2api/internal/pkg/kiro"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/trae"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/gin-gonic/gin"
@@ -153,6 +154,9 @@ type AccountTestService struct {
 	geminiTokenProvider       *GeminiTokenProvider
 	claudeTokenProvider       *ClaudeTokenProvider
 	kiroTokenProvider         *KiroTokenProvider
+	traeTokenProvider         *TraeTokenProvider
+	traeOAuthService          *TraeOAuthService
+	traeClient                *trae.Client
 	grokTokenProvider         *GrokTokenProvider
 	antigravityGatewayService *AntigravityGatewayService
 	httpUpstream              HTTPUpstream
@@ -465,6 +469,10 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 
 	if account.Platform == PlatformFish {
 		return s.testFishAccountConnection(c, account, modelID, prompt)
+	}
+
+	if account.Platform == PlatformTrae {
+		return s.testTraeAccountConnection(c, account, modelID)
 	}
 
 	// 按模型分流的多模型聚合平台（OpenCode、Command Code 等）。

@@ -117,6 +117,12 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
 	}
 
+	// TRAE：Cloud-IDE-JWT OAuth + Remote chat_sessions 私有协议，经专用
+	// runtime 做 Chat Completions 双向翻译，不走通用透传路径。
+	if account.Platform == PlatformTrae {
+		return s.forwardTraeChatCompletions(ctx, c, account, body, defaultMappedModel)
+	}
+
 	// Cursor compatibility: some clients send a Responses-shaped body to the
 	// /v1/chat/completions URL. Detect it before protocol routing so adaptive
 	// accounts never forward the body unchanged to a Chat Completions endpoint.

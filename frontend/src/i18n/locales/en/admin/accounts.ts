@@ -1871,6 +1871,15 @@ export default {
         relayApiKeyHint: 'API key for the relay upstream (sent as Authorization: Bearer)',
         relayBaseUrlHint: 'Handles requests fish native accounts cannot (sizes outside the allowlist, mask, n>8, webp). Channel mapping rewrites the model name, for example gpt-image-2 to gpt-image-1.'
       },
+      trae: {
+        refreshTokenLabel: 'TRAE Refresh Token',
+        refreshTokenPlaceholder: 'Paste the refresh_token of a logged-in Trae CN account',
+        refreshTokenHint: 'Long-lived refresh token from a Trae CN login (Trae IDE storage, an OAuth capture, or an existing relay export). The backend exchanges it via ExchangeToken for the short-lived Cloud-IDE-JWT and completes user identity automatically; run the connectivity test after creation to capture the concurrency slot.',
+        refreshTokenRequired: 'Paste the TRAE refresh token',
+        userIdLabel: 'User ID (optional)',
+        userIdPlaceholder: 'e.g. 7xxxxxxxxxxxxx',
+        userIdHint: 'Leave empty to let ExchangeToken complete it from the token.'
+      },
       leonardo: {
         cookieLabel: 'Leonardo Cookie',
         cookieHint: 'Log in to app.leonardo.ai, then copy the full cookie string from DevTools (Application → Cookies or a request Cookie header). Must include __Secure-better-auth.session_token; session_data.* shards are recommended. A bare session token value also works. The short-lived JWT is exchanged and kept alive automatically from this cookie.',
@@ -1882,6 +1891,8 @@ export default {
 
       usageWindow: {
         leonardoCredits: 'Credits',
+        traeCredits: 'TRAE Credits',
+        traeParallelLimit: 'Parallel Slots',
         leonardoFast: 'Fast Tokens',
         leonardoFastDaily: 'Fast Tokens (daily)',
         leonardoRollover: 'Rollover Bank',

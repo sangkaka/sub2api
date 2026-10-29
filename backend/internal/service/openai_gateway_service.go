@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	traepkg "github.com/Wei-Shaw/sub2api/internal/pkg/trae"
 	"github.com/Wei-Shaw/sub2api/internal/platform/liveattestation"
 	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
@@ -467,6 +468,12 @@ type OpenAIGatewayService struct {
 	deferredService       *DeferredService
 	openAITokenProvider   *OpenAITokenProvider
 	grokTokenProvider     *GrokTokenProvider
+	// TRAE 私有协议平台的转发依赖（token 获取/上游客户端/模型目录缓存），
+	// 经 SetTraeDeps 注入；未注入时 TRAE 分支返回未配置错误。
+	traeTokenProvider     *TraeTokenProvider
+	traeOAuthService      *TraeOAuthService
+	traeClient            *traepkg.Client
+	traeCatalog           *traeRuntimeCatalog
 	toolCorrector         *CodexToolCorrector
 	openaiWSResolver      OpenAIWSProtocolResolver
 	resolver              *ModelPricingResolver
