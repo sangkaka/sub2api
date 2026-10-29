@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 25 // v25: v24 (Kiro cache fields + group profit control + search/audio/video_model_prices billing fields + long-context + model pricing + CN providers + group force/free_openai_fast + codex_models_manifest_config) + group model_allowlist field (renamed from models_list_config, enforcing semantics)
+const apiKeyAuthSnapshotVersion = 26 // v26: fork v25 (Kiro cache fields + profit control + search/audio/video_model_prices billing + long-context + model pricing + CN providers + force/free_openai_fast + codex_models_manifest_config + model_allowlist enforcing) 与上游 v25（group image_count_billing 按张计费开关）合并，两者都变了快照结构，必须再升一版失效旧缓存
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -397,6 +397,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			MonthlyLimitUSD:                 groupForSnapshot.MonthlyLimitUSD,
 			AllowImageGeneration:            groupForSnapshot.AllowImageGeneration,
 			AllowBatchImageGeneration:       groupForSnapshot.AllowBatchImageGeneration,
+			ImageCountBilling:               groupForSnapshot.ImageCountBilling,
 			ImageRateIndependent:            groupForSnapshot.ImageRateIndependent,
 			ImageRateMultiplier:             groupForSnapshot.ImageRateMultiplier,
 			ImagePrice1K:                    groupForSnapshot.ImagePrice1K,
@@ -507,6 +508,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			MonthlyLimitUSD:                 snapshot.Group.MonthlyLimitUSD,
 			AllowImageGeneration:            snapshot.Group.AllowImageGeneration,
 			AllowBatchImageGeneration:       snapshot.Group.AllowBatchImageGeneration,
+			ImageCountBilling:               snapshot.Group.ImageCountBilling,
 			ImageRateIndependent:            snapshot.Group.ImageRateIndependent,
 			ImageRateMultiplier:             snapshot.Group.ImageRateMultiplier,
 			ImagePrice1K:                    snapshot.Group.ImagePrice1K,
