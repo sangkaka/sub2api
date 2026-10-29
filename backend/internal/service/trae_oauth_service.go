@@ -190,12 +190,28 @@ func TraeProviderSpecific(account *Account) map[string]any {
 
 // BuildTraeCommonParams 组装 Remote 会话的 common_params JSON 字符串：
 // 身份字段（provider_specific 优先、CN 默认值兜底）+ 稳定派生的设备标识 +
-// biz_session_id（账号+模型派生，上游按它复用会话上下文）。
+// biz_session_id（账号+模型+命名空间派生，上游按它复用会话上下文）。
+//
+// 会话命名空间：gw（网关真实流量）与 probe（账号探活）必须隔离——探活
+// "首个模型事件即返回 + stop" 会把半途会话留在上游，同 key 的后续完整
+// 回合会报业务码 1005（2026-10-29 迁移首批实测：批量探活后 kimi-k3.1-pro
+// 全量 1005，从未探活的 glm-5.3/deepseek 正常）。gw 前缀同时把派生与
+// trae2api 中转时代（无 variant）的会话隔离，避免迁移期互相追加上下文。
 func BuildTraeCommonParams(account *Account, model string) string {
+	return buildTraeCommonParams(account, model, "gw")
+}
+
+// BuildTraeCommonParamsForProbe 是账号探活专用的会话参数（probe 命名空间，
+// 与网关会话隔离，探活污染不影响真实流量）。
+func BuildTraeCommonParamsForProbe(account *Account, model string) string {
+	return buildTraeCommonParams(account, model, "probe")
+}
+
+func buildTraeCommonParams(account *Account, model, sessionVariant string) string {
 	psd := TraeProviderSpecific(account)
 	accountID := account.GetCredential("user_id")
 	deviceID := TraeDeviceID(accountID)
-	seed := accountID + "\x1f" + deviceID + "\x1f" + model
+	seed := accountID + "\x1f" + deviceID + "\x1f" + model + "\x1f" + sessionVariant
 	bizSession := hex.EncodeToString(sha256Sum(seed))[:32]
 	params := map[string]any{
 		"language":        "zh-cn",

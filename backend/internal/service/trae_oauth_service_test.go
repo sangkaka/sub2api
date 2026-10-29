@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -62,4 +63,22 @@ func TestUpstreamClientAuthHost(t *testing.T) {
 
 	withoutHost := svc.UpstreamClient(context.Background(), &Account{})
 	require.Empty(t, withoutHost.CloudIDEHost)
+}
+
+// 网关与探活的 biz_session_id 必须不同命名空间且各自稳定：探活半途 stop
+// 的会话不得污染网关会话（迁移首批 1005 事故的回归测试）。
+func TestTraeCommonParamsSessionNamespaces(t *testing.T) {
+	account := &Account{Credentials: map[string]any{"user_id": "433084928"}}
+	gw1 := BuildTraeCommonParams(account, "kimi-k3.1-pro")
+	gw2 := BuildTraeCommonParams(account, "kimi-k3.1-pro")
+	probe := BuildTraeCommonParamsForProbe(account, "kimi-k3.1-pro")
+
+	parse := func(s string) map[string]any {
+		out := map[string]any{}
+		require.NoError(t, json.Unmarshal([]byte(s), &out))
+		return out
+	}
+	require.Equal(t, parse(gw1)["biz_session_id"], parse(gw2)["biz_session_id"], "同账号同模型网关会话需稳定")
+	require.NotEqual(t, parse(gw1)["biz_session_id"], parse(probe)["biz_session_id"], "探活会话必须与网关隔离")
+	require.NotEmpty(t, parse(gw1)["biz_session_id"])
 }

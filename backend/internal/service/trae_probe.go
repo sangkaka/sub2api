@@ -113,7 +113,7 @@ func (s *AccountTestService) probeTraeSession(ctx context.Context, client *trae.
 		Query:        trae.FlattenMessages([]trae.ChatMessage{{Role: "user", Content: []byte(`"ping"`)}}),
 		Model:        model,
 		Descriptor:   descriptor,
-		CommonParams: BuildTraeCommonParams(account, model),
+		CommonParams: BuildTraeCommonParamsForProbe(account, model),
 	})
 	if err != nil {
 		return err
