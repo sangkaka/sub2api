@@ -2,31 +2,31 @@
 
 ## 1. PR-1 后端核心
 
-- [ ] 1.1 平台登记：`domain/constants.go` 加 `PlatformTrae = "trae"`；`domain/platforms.go`
+- [x] 1.1 平台登记：`domain/constants.go` 加 `PlatformTrae = "trae"`；`domain/platforms.go`
       platformList 登记（DisplayName "TRAE"，Gateway=PlatformGatewayOpenAI）；补
       platforms/platform_catalog 测试。
-- [ ] 1.2 `pkg/trae/oauth.go`：ExchangeToken（ClientID 常量 `ono9krqynydwx5`、ClientSecret "-"
+- [x] 1.2 `pkg/trae/oauth.go`：ExchangeToken（ClientID 常量 `ono9krqynydwx5`、ClientSecret "-"
       约定）、GetUserInfo（`x-cloudide-token` 头）；refresh_token 轮换校验（响应落库前比对请求时
       的 rt 仍为当前值）；TokenExpireAt 秒/毫秒/ISO 归一化。
-- [ ] 1.3 `pkg/trae/catalog.go`：拉取 `/models?functions=solo_agent_remote,solo_work_remote,
+- [x] 1.3 `pkg/trae/catalog.go`：拉取 `/models?functions=solo_agent_remote,solo_work_remote,
       solo_design_remote&show_custom_model=true`，解析 config_name/descriptor
       （reasoning_effort_config、max_mode、上下文上限）；`defaultModelIDsForPlatform` 静态兜底表。
-- [ ] 1.4 `pkg/trae/client.go`：`POST /chat_sessions`（Cloud-IDE-JWT 头组、common_params JSON
+- [x] 1.4 `pkg/trae/client.go`：`POST /chat_sessions`（Cloud-IDE-JWT 头组、common_params JSON
       字符串、agent_type/agent_id 钉住、手动模型回带完整 descriptor）、
       `GET /chat_sessions/{id}/events` SSE、`POST /stop`；首事件超时（120s）与无 done 截断判定。
-- [ ] 1.5 `pkg/trae/translator.go`：OpenAI messages → 扁平化 query（[System]/[Assistant]/
+- [x] 1.5 `pkg/trae/translator.go`：OpenAI messages → 扁平化 query（[System]/[Assistant]/
       [Client Tool Result] 标记 + `[{"type":"text","data":{"content":...}}]` 包裹）；SSE 快照差分
       （plan_item 按 id 的 thought/content 累加器）；heartbeat 透传；token_usage → OpenAI usage；
-      model_config 回填实际模型名；错误码表（4011/429/1001/401/4028）。
-- [ ] 1.6 `service/trae_token_provider.go` + `trae_token_refresher.go`：挂入
+      model_config 回填实际模型名；错误码表（4011/429/3004/4008/1001/401；4028 未在源码中验证，按不可重试处理）。
+- [x] 1.6 `service/trae_token_provider.go` + `trae_token_refresher.go`：挂入
       `token_refresh_service.go` 注册表与 wire；热路径过期前刷新 + Redis 锁。
-- [ ] 1.7 `service/trae_runtime.go` + 网关分支：`openai_gateway_chat_completions.go` PlatformTrae
+- [x] 1.7 `service/trae_runtime.go` + 网关分支：`openai_gateway_chat_completions.go` PlatformTrae
       分支；流式/非流式；reasoning_effort → custom_model（descriptor 钳制）；首模型事件前的换号
       重试与不重放原则；1001/401 强刷后单次重试。
-- [ ] 1.8 调度接入：建号/测试时抓 `quota.solo_agent_parallel_limit` 写账号 concurrency；
+- [x] 1.8 调度接入：建号/测试时抓 `quota.solo_agent_parallel_limit` 写账号 concurrency；
       4011/429 → SetRateLimited。
-- [ ] 1.9 `account_test_service.go` trae 分支：GetUserInfo + 最小会话探活。
-- [ ] 1.10 单测：以 Trae2api-cn `tests/`（test_trae_remote_client.py / test_sse.py /
+- [x] 1.9 `account_test_service.go` trae 分支：GetUserInfo + 最小会话探活。
+- [x] 1.10 单测：以 Trae2api-cn `tests/`（test_trae_remote_client.py / test_sse.py /
       test_auth.py）的离线 fixture 改写 Go 用例：快照差分、心跳、错误映射、token 归一化、
       refresh_token 竞态。
 

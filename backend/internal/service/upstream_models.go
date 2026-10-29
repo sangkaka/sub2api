@@ -813,6 +813,10 @@ func (s *AccountTestService) fetchUpstreamModelListRequest(ctx context.Context, 
 		models, err := s.fetchKiroDirectUpstreamModels(ctx, account)
 		return models, nil, nil, err
 	}
+	if account.Platform == PlatformTrae {
+		models, err := s.fetchTraeUpstreamModels(ctx, account)
+		return models, nil, nil, err
+	}
 	if account.IsBPSOAuth() {
 		models, body, err := s.fetchExcelBPSUpstreamModels(ctx, account)
 		return models, body, nil, err

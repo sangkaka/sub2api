@@ -25,5 +25,6 @@ func TestAllPlatformsIncludesEveryConcretePlatform(t *testing.T) {
 		"cline",
 		"leonardo",
 		"fish",
+		"trae",
 	}, AllPlatforms())
 }

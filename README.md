@@ -900,6 +900,21 @@ Long-running OpenAI/Grok image generation and editing can be submitted through `
 
 ---
 
+## TRAE (Trae CN) Support
+
+Sub2API supports TRAE (Trae CN) accounts natively through the Solo Cloud-IDE OAuth flow. Traffic is exposed to clients as OpenAI Chat Completions and translated bidirectionally to TRAE's remote `chat_sessions` session protocol.
+
+### Supported Scope
+
+- Platform name: `trae`
+- Account types: OAuth accounts (credentials carry a long-lived `refresh_token`; the backend exchanges it via `ExchangeToken` for a short-lived Cloud-IDE-JWT and completes the identity fields automatically)
+- Creating an account: create an OAuth account whose credentials contain at least `refresh_token` (and optionally `user_id`); run the account connectivity test to complete the credentials, capture the account concurrency slot (`solo_agent_parallel_limit`), and verify the session path
+- Public targets: `/v1/chat/completions` and `/chat/completions` (streaming and non-streaming)
+- Reasoning: `reasoning_effort` is mapped to TRAE native levels (`light` / `high` / `extra_high`) and clamped to the levels each model descriptor advertises; thinking output is returned in `delta.reasoning_content`
+- Model catalog: fetched per account from the upstream `/models` endpoint (model sync button / account test); explicit models must be bound in the catalog — unbound models fail loudly instead of silently falling back to the upstream default model
+- Scheduling: 4011/429/3004/4008 mark the account rate limited and cooled down; token expiry refreshes transparently 30 minutes ahead; 401/business code 1001 force-refreshes once
+- Out of scope: tool calls and image inputs are not translated in this version; check-in automation is not included
+
 ## Grok / xAI Support
 
 Sub2API supports both Grok subscription accounts through xAI OAuth and standard xAI API-key accounts. Both account types forward OpenAI-compatible Responses traffic to xAI.

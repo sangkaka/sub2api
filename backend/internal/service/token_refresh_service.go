@@ -207,6 +207,20 @@ func (s *TokenRefreshService) SetAccountRuntimeBlocker(blocker AccountRuntimeBlo
 	s.runtimeBlocker = blocker
 }
 
+// RegisterTraeRefresher 把 TRAE 刷新器加入统一注册表（执行器与刷新器同一
+// 实例，与其它 provider 的注册语义一致）。
+func (s *TokenRefreshService) RegisterTraeRefresher(traeOAuthService *TraeOAuthService) {
+	if s == nil || traeOAuthService == nil {
+		return
+	}
+	refresher := NewTraeTokenRefresher(traeOAuthService)
+	s.registrations = append(s.registrations, tokenRefreshRegistration{
+		platform: PlatformTrae,
+		refresher: refresher,
+		executor:  refresher,
+	})
+}
+
 func (s *TokenRefreshService) notifyAccountSchedulingBlocked(account *Account, until time.Time, reason string) {
 	if s == nil || s.runtimeBlocker == nil || account == nil {
 		return
