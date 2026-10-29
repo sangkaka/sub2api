@@ -19,11 +19,12 @@ import (
 type Client struct {
 	// APIHost 覆盖 Cloud-IDE API 域名（默认 DefaultAPIHost）。
 	APIHost string
-	// ExchangeHost 覆盖 ExchangeToken 的域名。企业版账号（ToB 租户）的
-	// refresh_token 由 console.enterprise.trae.cn 签发，只能在该域名兑换；
-	// 个人版留空（随 APIHost）。仅作用于 ExchangeToken——GetUserInfo /
-	// entitlement / 签到端点对两种签发的 token 都在默认域名可用。
-	ExchangeHost string
+	// CloudIDEHost 覆盖 Cloud-IDE v3 身份端点（ExchangeToken / GetUserInfo）
+	// 的域名。企业版账号（ToB 租户）的凭据由 console.enterprise.trae.cn 签发，
+	// 其 rt 只能在该域名兑换，且默认域名的 GetUserInfo 会报 20315
+	// "User Not Found"；个人版留空（随 APIHost）。/trae/api/v2/*（积分/
+	// 签到）对两种签发的 token 均在默认域名可用，不受此覆盖。
+	CloudIDEHost string
 	// RemoteBase 覆盖 Remote 会话协议基址（默认 DefaultRemoteBase）。
 	RemoteBase string
 	// WebOrigin 覆盖浏览器 Origin/Referer（默认 DefaultWebOrigin）。
@@ -41,8 +42,8 @@ func (c *Client) apiHost() string {
 	return DefaultAPIHost
 }
 
-func (c *Client) exchangeHost() string {
-	if v := strings.TrimSpace(c.ExchangeHost); v != "" {
+func (c *Client) cloudIDEHost() string {
+	if v := strings.TrimSpace(c.CloudIDEHost); v != "" {
 		return strings.TrimRight(v, "/")
 	}
 	return c.apiHost()
@@ -155,7 +156,7 @@ func (c *Client) ExchangeToken(ctx context.Context, refreshToken, userID string)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.exchangeHost()+exchangeTokenPath, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cloudIDEHost()+exchangeTokenPath, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +218,7 @@ func (c *Client) GetUserInfo(ctx context.Context, token string) (*TraeUserInfo, 
 		return nil, fmt.Errorf("trae: token is empty")
 	}
 	body, _ := json.Marshal(map[string]any{"ReqSource": "IDE"})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiHost()+getUserInfoPath, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cloudIDEHost()+getUserInfoPath, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

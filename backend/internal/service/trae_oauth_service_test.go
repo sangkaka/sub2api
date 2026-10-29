@@ -58,8 +58,8 @@ func TestUpstreamClientAuthHost(t *testing.T) {
 	withHost := svc.UpstreamClient(context.Background(), &Account{
 		Credentials: map[string]any{"auth_host": " https://console.enterprise.trae.cn/ "},
 	})
-	require.Equal(t, "https://console.enterprise.trae.cn", withHost.ExchangeHost)
+	require.Equal(t, "https://console.enterprise.trae.cn", withHost.CloudIDEHost)
 
 	withoutHost := svc.UpstreamClient(context.Background(), &Account{})
-	require.Empty(t, withoutHost.ExchangeHost)
+	require.Empty(t, withoutHost.CloudIDEHost)
 }

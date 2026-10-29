@@ -47,7 +47,7 @@ func (s *TraeOAuthService) UpstreamClient(ctx context.Context, account *Account)
 		APIHost:     base.APIHost,
 		RemoteBase:  base.RemoteBase,
 		WebOrigin:   base.WebOrigin,
-		ExchangeHost: firstNonEmptyString(traeAccountAuthHost(account), base.ExchangeHost),
+		CloudIDEHost: firstNonEmptyString(traeAccountAuthHost(account), base.CloudIDEHost),
 		HTTP:        base.HTTP,
 	}
 	if out.HTTP == nil {
@@ -56,11 +56,12 @@ func (s *TraeOAuthService) UpstreamClient(ctx context.Context, account *Account)
 	return out
 }
 
-// traeAccountAuthHost 读取账号凭据 auth_host：签发/刷新该账号 refresh_token
-// 的 Cloud-IDE 控制台域名。企业版（ToB 租户）账号为
-// console.enterprise.trae.cn，其 rt 在默认 api.trae.cn 兑换会被拒
-// （"refresh token is invalid"）；个人版留空走默认。仅作用于 ExchangeToken，
-// GetUserInfo / entitlement / 签到端点对两种签发的 token 均在默认域名可用。
+// traeAccountAuthHost 读取账号凭据 auth_host：签发/刷新该账号凭据的
+// Cloud-IDE 控制台域名。企业版（ToB 租户）账号为
+// console.enterprise.trae.cn——其 rt 在默认 api.trae.cn 兑换会被拒
+// （"refresh token is invalid"），GetUserInfo 也报 20315 "User Not Found"；
+// 个人版留空走默认。作用于 Cloud-IDE v3 身份端点（ExchangeToken /
+// GetUserInfo）；/trae/api/v2/*（积分/签到）对两种 token 均在默认域名可用。
 func traeAccountAuthHost(account *Account) string {
 	if account == nil {
 		return ""

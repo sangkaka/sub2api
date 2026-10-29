@@ -338,29 +338,39 @@ func TestExchangeTokenAuthError(t *testing.T) {
 }
 
 // 企业控制台（console.enterprise.trae.cn）的兑换响应是 {code,message,Data}
-// 包装、时间为数字毫秒；ExchangeHost 覆盖仅作用于 ExchangeToken。
+// 包装、时间为数字毫秒；CloudIDEHost 覆盖作用于 ExchangeToken/GetUserInfo。
 func TestExchangeTokenEnterpriseWire(t *testing.T) {
-	exchangeHit := false
+	userInfoHit := false
 	exchangeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, exchangeTokenPath, r.URL.Path)
-		exchangeHit = true
-		fmt.Fprint(w, `{"code":0,"message":"","Data":{"Token":"jwt-ent","RefreshToken":"rt-ent","RefreshExpireAt":1801054911755}}`)
+		switch r.URL.Path {
+		case exchangeTokenPath:
+			fmt.Fprint(w, `{"code":0,"message":"","Data":{"Token":"jwt-ent","RefreshToken":"rt-ent","RefreshExpireAt":1801054911755}}`)
+		case getUserInfoPath:
+			userInfoHit = true
+			fmt.Fprint(w, `{"Result":{"UserID":"433084928","Region":"CN"}}`)
+		default:
+			t.Fatalf("unexpected path on cloud-ide host: %s", r.URL.Path)
+		}
 	}))
 	defer exchangeServer.Close()
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("api host must not be hit by ExchangeToken: %s", r.URL.Path)
+		t.Fatalf("api host must not be hit by ExchangeToken/GetUserInfo: %s", r.URL.Path)
 	}))
 	defer apiServer.Close()
 
-	client := &Client{APIHost: apiServer.URL, ExchangeHost: exchangeServer.URL}
+	client := &Client{APIHost: apiServer.URL, CloudIDEHost: exchangeServer.URL}
 	result, err := client.ExchangeToken(context.Background(), "rt-ent-old", "")
 	require.NoError(t, err)
-	require.True(t, exchangeHit)
 	require.Equal(t, "jwt-ent", result.Token)
 	require.Equal(t, "rt-ent", result.RefreshToken)
 	// 数字毫秒时间戳归一化为字符串后仍可被 NormalizeExpireAt 解析。
 	_, ok := NormalizeExpireAt(string(result.RefreshExpireAt))
 	require.True(t, ok)
+
+	info, err := client.GetUserInfo(context.Background(), "jwt-ent")
+	require.NoError(t, err)
+	require.True(t, userInfoHit)
+	require.Equal(t, "433084928", info.UserID)
 }
 
 func TestExchangeTokenEnterpriseCodeError(t *testing.T) {
@@ -369,7 +379,7 @@ func TestExchangeTokenEnterpriseCodeError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &Client{ExchangeHost: server.URL}
+	client := &Client{CloudIDEHost: server.URL}
 	_, err := client.ExchangeToken(context.Background(), "stale-rt", "")
 	require.Error(t, err)
 	ue := AsUpstreamError(err)
