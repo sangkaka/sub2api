@@ -303,3 +303,138 @@ func TestForwardTraeChatCompletionsToolBridge(t *testing.T) {
 	require.NotContains(t, out, "opencode_tool_call")
 	require.Contains(t, out, "Let me check ")
 }
+
+// Remote 对某模型固定 1005（kimi-k3.1-pro 实测）：回合先在 Remote 收到
+// error 事件，未写任何客户端字节即回落 llm_utils_chat；偏好缓存让第二笔
+// 请求跳过 Remote 直连 IDE。
+func TestForwardTraeChatCompletionsIDEFallback(t *testing.T) {
+	var ideHits, remoteEventHits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"list":[{"function":"solo_agent_remote","models":[
+			{"config_name":"GLM-5.3","provider":"zhipu","config_source":1,"is_preset":true}
+		]}]}}`)
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"chat_session_id":"s-1","message_id":"m-1"}}`)
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/events", func(w http.ResponseWriter, r *http.Request) {
+		remoteEventHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: heartbeat\n\n"+`event: error`+"\n"+`data: {"code":1005,"message":""}`+"\n\n")
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/stop", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		ideHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, strings.Join([]string{
+			`event: output` + "\n" + `data: {"response":"hello ide","reasoning_content":null,"tool_calls":null}` + "\n\n",
+			`event: token_usage` + "\n" + `data: {"prompt_tokens":96,"completion_tokens":8,"total_tokens":104}` + "\n\n",
+			`event: done` + "\n" + `data: {"finish_reason":"stop"}` + "\n\n",
+		}, ""))
+	})
+	upstream := httptest.NewServer(mux)
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+	svc.traeClient = &trae.Client{
+		RemoteBase:   upstream.URL + "/api/remote/v1",
+		CloudIDEHost: upstream.URL,
+	}
+	// 隔离偏好缓存（包级状态）。
+	traeIDEPreferred.mu.Lock()
+	saved := traeIDEPreferred.expires
+	traeIDEPreferred.expires = map[string]time.Time{}
+	traeIDEPreferred.mu.Unlock()
+	t.Cleanup(func() {
+		traeIDEPreferred.mu.Lock()
+		traeIDEPreferred.expires = saved
+		traeIDEPreferred.mu.Unlock()
+	})
+
+	body, _ := json.Marshal(map[string]any{
+		"model":    "GLM-5.3",
+		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+	})
+
+	// 第一笔：Remote 1005 → 回落 IDE（非流式，干净重试）。
+	c, rec := traeTestContext()
+	result, err := svc.forwardTraeChatCompletions(context.Background(), c, newTraeTestAccount(), body, "GLM-5.3")
+	require.NoError(t, err)
+	require.Equal(t, traeIDEUpstreamEndpoint, result.UpstreamEndpoint)
+	require.Equal(t, 96, result.Usage.InputTokens)
+	require.Contains(t, rec.Body.String(), "hello ide")
+	require.Equal(t, 1, ideHits)
+	require.Equal(t, 1, remoteEventHits)
+
+	// 第二笔：偏好缓存命中，直连 IDE（不再打 Remote events）。
+	c2, rec2 := traeTestContext()
+	_, err = svc.forwardTraeChatCompletions(context.Background(), c2, newTraeTestAccount(), body, "GLM-5.3")
+	require.NoError(t, err)
+	require.Equal(t, 2, ideHits)
+	require.Equal(t, 1, remoteEventHits)
+	require.Contains(t, rec2.Body.String(), "hello ide")
+}
+
+// 流式回落：Remote 心跳（头未写，被丢弃）→ 1005 → IDE 流式正常输出，
+// 客户端只看到一个连续 SSE 流。
+func TestForwardTraeChatCompletionsIDEFallbackStream(t *testing.T) {
+	var ideHits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"list":[{"function":"solo_agent_remote","models":[
+			{"config_name":"GLM-5.3","provider":"zhipu","config_source":1,"is_preset":true}
+		]}]}}`)
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"chat_session_id":"s-1","message_id":"m-1"}}`)
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: heartbeat\n\n"+`event: error`+"\n"+`data: {"code":1005}`+"\n\n")
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/stop", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		ideHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, strings.Join([]string{
+			`event: output` + "\n" + `data: {"response":"流式回归","reasoning_content":"思"}` + "\n\n",
+			`event: token_usage` + "\n" + `data: {"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}` + "\n\n",
+			`event: done` + "\n" + `data: {"finish_reason":"stop"}` + "\n\n",
+		}, ""))
+	})
+	upstream := httptest.NewServer(mux)
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+	svc.traeClient = &trae.Client{
+		RemoteBase:   upstream.URL + "/api/remote/v1",
+		CloudIDEHost: upstream.URL,
+	}
+	traeIDEPreferred.mu.Lock()
+	saved := traeIDEPreferred.expires
+	traeIDEPreferred.expires = map[string]time.Time{}
+	traeIDEPreferred.mu.Unlock()
+	t.Cleanup(func() {
+		traeIDEPreferred.mu.Lock()
+		traeIDEPreferred.expires = saved
+		traeIDEPreferred.mu.Unlock()
+	})
+
+	body, _ := json.Marshal(map[string]any{
+		"model":  "GLM-5.3",
+		"stream": true,
+		"messages": []map[string]any{
+			{"role": "user", "content": "hi"},
+		},
+	})
+	c, rec := traeTestContext()
+	result, err := svc.forwardTraeChatCompletions(context.Background(), c, newTraeTestAccount(), body, "GLM-5.3")
+	require.NoError(t, err)
+	require.True(t, result.Stream)
+	require.Equal(t, traeIDEUpstreamEndpoint, result.UpstreamEndpoint)
+	require.Equal(t, 1, ideHits)
+	out := rec.Body.String()
+	require.Contains(t, out, `"content":"流式回归"`)
+	require.Contains(t, out, `"reasoning_content":"思"`)
+	require.Contains(t, out, "data: [DONE]")
+	require.Equal(t, 1, strings.Count(out, `"role":"assistant"`), "SSE 头只写一次")
+}

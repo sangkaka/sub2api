@@ -22,6 +22,12 @@ const (
 	traeCatalogCacheTTL = 10 * time.Minute
 	// traeUpstreamEndpoint 记录到 OpenAIForwardResult 供运维展示。
 	traeUpstreamEndpoint = "/chat_sessions"
+	// traeIDEUpstreamEndpoint 是 IDE/TraeWork 兼容会话端点（企业版账号的
+	// 实际执行链，kimi-k3.1-pro 等 Remote 拒绝模型的回落路径）。
+	traeIDEUpstreamEndpoint = "/api/agent/v3/llm_utils_chat"
+	// traeStreamHeadKey 标记本请求的 trae SSE 头（+role 帧）已写：Remote
+	// 回合内回落 IDE 时续写同一响应流而不重复写头。
+	traeStreamHeadKey = "trae_sse_head_written"
 )
 
 // traeRuntimeCatalog 缓存账号级模型目录（含 descriptor）。descriptor 必须随
@@ -97,6 +103,11 @@ func (s *OpenAIGatewayService) forwardTraeChatCompletions(
 	}
 
 	client := s.traeClientForAccount(ctx, account)
+	// Remote 对部分模型固定 1005（kimi-k3.1-pro 实测）：已确认的账号+模型
+	// 直连 IDE 端点，跳过注定失败的 Remote 会话。
+	if s.traePrefersIDE(account.ID, upstreamModel) {
+		return s.forwardTraeIDETurn(ctx, c, client, token, account, chatReq, originalModel, billingModel, upstreamModel, startTime)
+	}
 	descriptor, err := s.traeModelDescriptor(ctx, client, account, token, upstreamModel)
 	if err != nil {
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
@@ -154,32 +165,124 @@ func (s *OpenAIGatewayService) forwardTraeChatCompletions(
 		cancel()
 	}()
 
-	translator := trae.NewStreamTranslator(originalModel)
-	if chatReq.Stream {
-		return s.streamTraeTurn(ctx, c, client, token, account, handle, translator, chatReq, originalModel, billingModel, upstreamModel, effort, startTime)
+	eventsFn := func() (<-chan trae.Event, <-chan error) {
+		return client.StreamEvents(ctx, token, handle.SessionID, handle.MessageID)
 	}
-	return s.bufferedTraeTurn(ctx, c, client, token, account, handle, translator, chatReq, originalModel, billingModel, upstreamModel, effort, startTime)
+	translator := trae.NewStreamTranslator(originalModel)
+	result, err := s.runTraeTurn(ctx, c, account, eventsFn, translator, chatReq, originalModel, billingModel, upstreamModel, effort, traeUpstreamEndpoint, startTime)
+	if err != nil && isTraeIDEFallbackError(err) {
+		// Remote 对该模型固定 1005（kimi-k3.1-pro 实测）：回落 IDE 端点并
+		// 缓存偏好，后续请求直连。
+		s.traeMarkIDEPreferred(account.ID, upstreamModel)
+		return s.forwardTraeIDETurn(ctx, c, client, token, account, chatReq, originalModel, billingModel, upstreamModel, startTime)
+	}
+	return result, err
 }
 
-// streamTraeTurn 流式回写：SSE 头 + 增量 chunk + 心跳注释 + [DONE]。
-func (s *OpenAIGatewayService) streamTraeTurn(
+// runTraeTurn 按请求形态（流式/缓冲）执行一个回合。
+func (s *OpenAIGatewayService) runTraeTurn(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	eventsFn traeEventSource,
+	translator traeTurnTranslator,
+	chatReq apicompat.ChatCompletionsRequest,
+	originalModel, billingModel, upstreamModel, effort, upstreamEndpoint string,
+	startTime time.Time,
+) (*OpenAIForwardResult, error) {
+	if chatReq.Stream {
+		return s.streamTraeTurn(ctx, c, account, eventsFn, translator, chatReq, originalModel, billingModel, upstreamModel, effort, upstreamEndpoint, startTime)
+	}
+	return s.bufferedTraeTurn(ctx, c, account, eventsFn, translator, chatReq, originalModel, billingModel, upstreamModel, effort, upstreamEndpoint, startTime)
+}
+
+// forwardTraeIDETurn 走 llm_utils_chat（IDE/TraeWork 兼容会话）执行回合：
+// 原生工具字段而非文本桥；无两步会话与 stop 收尾。
+func (s *OpenAIGatewayService) forwardTraeIDETurn(
 	ctx context.Context,
 	c *gin.Context,
 	client *trae.Client,
 	token string,
 	account *Account,
-	handle *trae.SessionHandle,
-	translator *trae.StreamTranslator,
 	chatReq apicompat.ChatCompletionsRequest,
-	originalModel, billingModel, upstreamModel, effort string,
+	originalModel, billingModel, upstreamModel string,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
-	c.Writer.Header().Set("Content-Type", "text/event-stream")
-	c.Writer.Header().Set("Cache-Control", "no-cache")
-	c.Writer.Header().Set("Connection", "keep-alive")
-	c.Writer.Header().Set("X-Accel-Buffering", "no")
-	c.Writer.WriteHeader(http.StatusOK)
+	SetActualOpenAIUpstreamEndpoint(c, traeIDEUpstreamEndpoint)
+	maxTokens := 0
+	if chatReq.MaxCompletionTokens != nil && *chatReq.MaxCompletionTokens > 0 {
+		maxTokens = *chatReq.MaxCompletionTokens
+	} else if chatReq.MaxTokens != nil && *chatReq.MaxTokens > 0 {
+		maxTokens = *chatReq.MaxTokens
+	}
+	ideReq := trae.IDEChatRequest{
+		Messages:          toTraeMessages(chatReq.Messages),
+		ConfigName:        upstreamModel,
+		UserID:            account.GetCredential("user_id"),
+		MaxTokens:         maxTokens,
+		Tools:             toTraeToolDefinitions(chatReq.Tools),
+		ToolChoice:        json.RawMessage(chatReq.ToolChoice),
+		ParallelToolCalls: chatReq.ParallelToolCalls,
+	}
+	eventsFn := func() (<-chan trae.Event, <-chan error) {
+		return client.IDEChat(ctx, token, ideReq)
+	}
+	return s.runTraeTurn(ctx, c, account, eventsFn, trae.NewIDETranslator(originalModel), chatReq, originalModel, billingModel, upstreamModel, "", traeIDEUpstreamEndpoint, startTime)
+}
 
+// traeIDEPreferred 缓存「账号+模型 → Remote 固定 1005」的偏好，避免每个
+// 请求都先付一次失败的 Remote 会话。进程级，30 分钟过期后重探 Remote。
+var traeIDEPreferred struct {
+	mu      sync.Mutex
+	expires map[string]time.Time
+}
+
+const traeIDEPreferredTTL = 30 * time.Minute
+
+func (s *OpenAIGatewayService) traeMarkIDEPreferred(accountID int64, model string) {
+	key := fmt.Sprintf("%d|%s", accountID, model)
+	traeIDEPreferred.mu.Lock()
+	defer traeIDEPreferred.mu.Unlock()
+	if traeIDEPreferred.expires == nil {
+		traeIDEPreferred.expires = map[string]time.Time{}
+	}
+	traeIDEPreferred.expires[key] = time.Now().Add(traeIDEPreferredTTL)
+}
+
+func (s *OpenAIGatewayService) traePrefersIDE(accountID int64, model string) bool {
+	key := fmt.Sprintf("%d|%s", accountID, model)
+	traeIDEPreferred.mu.Lock()
+	defer traeIDEPreferred.mu.Unlock()
+	expiry, ok := traeIDEPreferred.expires[key]
+	return ok && time.Now().Before(expiry)
+}
+
+// traeTurnTranslator 是回合管线消费的翻译器契约：Remote 快照翻译器与
+// IDE（llm_utils_chat）增量翻译器共用同一套流式/缓冲收尾逻辑。
+type traeTurnTranslator interface {
+	Started() bool
+	SawOutput() bool
+	ProcessEvent(trae.Event) []trae.Delta
+	Finalize(bool) (*trae.TurnResult, []trae.Delta)
+}
+
+// traeEventSource 打开一个回合的事件流（Remote 两步会话第二步，或 IDE
+// 单请求 SSE），供回合管线消费。
+type traeEventSource func() (<-chan trae.Event, <-chan error)
+
+// streamTraeTurn 流式回写：SSE 头 + 增量 chunk + 心跳注释 + [DONE]。
+// SSE 头惰性写入：首个输出/心跳前发生可重试错误（限流换号、IDE 回落）
+// 时不向客户端写任何字节，上层可以干净地重派。
+func (s *OpenAIGatewayService) streamTraeTurn(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	eventsFn traeEventSource,
+	translator traeTurnTranslator,
+	chatReq apicompat.ChatCompletionsRequest,
+	originalModel, billingModel, upstreamModel, effort, upstreamEndpoint string,
+	startTime time.Time,
+) (*OpenAIForwardResult, error) {
 	var (
 		firstTokenMs       *int
 		clientDisconnected bool
@@ -187,8 +290,9 @@ func (s *OpenAIGatewayService) streamTraeTurn(
 		toolCallBase       int
 		created            = time.Now().Unix()
 		chunkID            = fmt.Sprintf("chatcmpl-trae-%d", created)
+		headWritten        bool
 	)
-	writeDelta := func(delta apicompat.ChatDelta, finish *string) {
+	writeChunk := func(delta apicompat.ChatDelta, finish *string) {
 		if clientDisconnected {
 			return
 		}
@@ -206,11 +310,33 @@ func (s *OpenAIGatewayService) streamTraeTurn(
 		}
 		c.Writer.Flush()
 	}
+	ensureHead := func() {
+		if headWritten {
+			return
+		}
+		// 回落续流：Remote 回合已写过头时（同请求内回落 IDE），不重复写
+		// 头与 role 帧，客户端看到的是单一连续 SSE 流。
+		if written, ok := c.Get(traeStreamHeadKey); ok {
+			headWritten, _ = written.(bool)
+			if headWritten {
+				return
+			}
+		}
+		headWritten = true
+		c.Set(traeStreamHeadKey, true)
+		c.Writer.Header().Set("Content-Type", "text/event-stream")
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("Connection", "keep-alive")
+		c.Writer.Header().Set("X-Accel-Buffering", "no")
+		c.Writer.WriteHeader(http.StatusOK)
+		writeChunk(apicompat.ChatDelta{Role: "assistant"}, nil)
+	}
+	writeDelta := func(delta apicompat.ChatDelta, finish *string) {
+		ensureHead()
+		writeChunk(delta, finish)
+	}
 
-	role := "assistant"
-	writeDelta(apicompat.ChatDelta{Role: role}, nil)
-
-	events, errCh := client.StreamEvents(ctx, token, handle.SessionID, handle.MessageID)
+	events, errCh := eventsFn()
 	streamFailed := false
 loop:
 	for {
@@ -226,6 +352,10 @@ loop:
 			if ev.Name == trae.EventDone {
 				doneSeen = true
 			}
+			if fallback := traeIDEFallbackEvent(ev, translator); fallback != nil {
+				// Remote 对该模型固定 1005：未写头，干净交上层回落 IDE。
+				return nil, fallback
+			}
 			if firstTokenMs == nil && !isTraeHeartbeatEvent(ev) {
 				ms := int(time.Since(startTime).Milliseconds())
 				firstTokenMs = &ms
@@ -235,6 +365,7 @@ loop:
 				if delta.Heartbeat {
 					// 心跳以 SSE 注释透传：客户端忽略注释但不会误判回合结束。
 					if !clientDisconnected {
+						ensureHead()
 						fmt.Fprint(c.Writer, ": keepalive\n\n") //nolint:errcheck
 						c.Writer.Flush()
 					}
@@ -293,7 +424,30 @@ loop:
 		}
 	}
 	_ = streamFailed
-	return s.finishTraeStream(c, account, translator, clientDisconnected, doneSeen, toolCallBase, firstTokenMs, originalModel, billingModel, upstreamModel, effort, chunkID, created, startTime, writeDelta)
+	return s.finishTraeStream(c, account, translator, clientDisconnected, doneSeen, toolCallBase, firstTokenMs, originalModel, billingModel, upstreamModel, upstreamEndpoint, effort, chunkID, created, startTime, writeDelta, ensureHead)
+}
+
+// traeIDEFallbackEvent 判定 Remote 流中需要回落 IDE 端点的错误事件：
+// 业务码 1005 且尚未观察到模型输出（kimi-k3.1-pro 实测固定复现）。
+func traeIDEFallbackEvent(ev trae.Event, translator traeTurnTranslator) error {
+	if ev.Name != trae.EventError || translator.SawOutput() {
+		return nil
+	}
+	code, _ := trae.ExtractErrorDetails(ev.Data)
+	if code != trae.IDEFallbackCode {
+		return nil
+	}
+	return &trae.UpstreamError{
+		Kind:    trae.ErrorKindUpstream,
+		Code:    trae.IDEFallbackCode,
+		Message: "trae remote rejected this model (code 1005); retry via llm_utils_chat",
+	}
+}
+
+// isTraeIDEFallbackError 识别回合层返回的 1005 回落信号。
+func isTraeIDEFallbackError(err error) bool {
+	ue := trae.AsUpstreamError(err)
+	return ue != nil && ue.Code == trae.IDEFallbackCode
 }
 
 func isTraeHeartbeatEvent(ev trae.Event) bool {
@@ -304,15 +458,17 @@ func isTraeHeartbeatEvent(ev trae.Event) bool {
 func (s *OpenAIGatewayService) finishTraeStream(
 	c *gin.Context,
 	account *Account,
-	translator *trae.StreamTranslator,
+	translator traeTurnTranslator,
 	clientDisconnected, doneSeen bool,
 	toolCallBase int,
 	firstTokenMs *int,
-	originalModel, billingModel, upstreamModel, effort, chunkID string,
+	originalModel, billingModel, upstreamModel, upstreamEndpoint, effort, chunkID string,
 	created int64,
 	startTime time.Time,
 	writeDelta func(apicompat.ChatDelta, *string),
+	ensureHead func(),
 ) (*OpenAIForwardResult, error) {
+	ensureHead()
 	result, tail := translator.Finalize(!doneSeen)
 	for _, delta := range tail {
 		chatDelta := apicompat.ChatDelta{}
@@ -361,7 +517,7 @@ func (s *OpenAIGatewayService) finishTraeStream(
 		Model:            originalModel,
 		BillingModel:     billingModel,
 		UpstreamModel:    upstreamModel,
-		UpstreamEndpoint: traeUpstreamEndpoint,
+		UpstreamEndpoint: upstreamEndpoint,
 		Stream:           true,
 		Duration:         time.Since(startTime),
 		FirstTokenMs:     firstTokenMs,
@@ -373,23 +529,24 @@ func (s *OpenAIGatewayService) finishTraeStream(
 func (s *OpenAIGatewayService) bufferedTraeTurn(
 	ctx context.Context,
 	c *gin.Context,
-	client *trae.Client,
-	token string,
 	account *Account,
-	handle *trae.SessionHandle,
-	translator *trae.StreamTranslator,
+	eventsFn traeEventSource,
+	translator traeTurnTranslator,
 	chatReq apicompat.ChatCompletionsRequest,
-	originalModel, billingModel, upstreamModel, effort string,
+	originalModel, billingModel, upstreamModel, effort, upstreamEndpoint string,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
 	var firstTokenMs *int
-	events, errCh := client.StreamEvents(ctx, token, handle.SessionID, handle.MessageID)
+	events, errCh := eventsFn()
 	for events != nil || errCh != nil {
 		select {
 		case ev, ok := <-events:
 			if !ok {
 				events = nil
 				continue
+			}
+			if fallback := traeIDEFallbackEvent(ev, translator); fallback != nil {
+				return nil, fallback
 			}
 			if firstTokenMs == nil && !isTraeHeartbeatEvent(ev) {
 				ms := int(time.Since(startTime).Milliseconds())
@@ -450,7 +607,7 @@ func (s *OpenAIGatewayService) bufferedTraeTurn(
 		Model:            originalModel,
 		BillingModel:     billingModel,
 		UpstreamModel:    upstreamModel,
-		UpstreamEndpoint: traeUpstreamEndpoint,
+		UpstreamEndpoint: upstreamEndpoint,
 		Stream:           false,
 		Duration:         time.Since(startTime),
 		FirstTokenMs:     firstTokenMs,

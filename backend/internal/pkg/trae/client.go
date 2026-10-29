@@ -1,7 +1,6 @@
 package trae
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -265,72 +264,7 @@ func (c *Client) StreamEvents(ctx context.Context, token, sessionID, messageID s
 			)
 			return
 		}
-		reader := bufio.NewReader(resp.Body)
-		var (
-			eventName string
-			dataLines []string
-		)
-		flush := func(final bool) {
-			defer func() {
-				eventName = ""
-				dataLines = nil
-			}()
-			payload := strings.Join(dataLines, "\n")
-			payload = strings.TrimSpace(payload)
-			if payload == "[DONE]" {
-				select {
-				case events <- Event{Name: EventDone, Data: map[string]any{}}:
-				case <-ctx.Done():
-				}
-				return
-			}
-			if payload == "" && eventName == "" {
-				return
-			}
-			data := map[string]any{}
-			if payload != "" {
-				if err := json.Unmarshal([]byte(payload), &data); err != nil {
-					data = map[string]any{"_raw": payload}
-				}
-			}
-			name := eventName
-			if name == "" {
-				name = firstStringValue([]map[string]any{data}, "event", "event_type", "eventType", "type")
-			}
-			if name == "" {
-				if !final {
-					return
-				}
-				name = EventMessage
-			}
-			select {
-			case events <- Event{Name: NormalizeEventName(name), Data: data}:
-			case <-ctx.Done():
-			}
-		}
-		for {
-			line, err := reader.ReadString('\n')
-			if len(line) > 0 || err == nil {
-				trimmed := strings.TrimRight(line, "\r\n")
-				switch {
-				case strings.HasPrefix(trimmed, ":"):
-					// SSE 注释（心跳）忽略；协议心跳走显式 heartbeat 事件。
-				case strings.HasPrefix(trimmed, "event:"):
-					eventName = strings.TrimSpace(strings.TrimPrefix(trimmed, "event:"))
-				case strings.HasPrefix(trimmed, "data:"):
-					dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(trimmed, "data:")))
-				case trimmed == "":
-					flush(false)
-				}
-			}
-			if err != nil {
-				// EOF：遗留 buffer 的尾帧按 final 处理（上游可能省略结尾空行）。
-				if len(dataLines) > 0 || eventName != "" {
-					flush(true)
-				}
-				return
-			}
-		}
+		readSSEEvents(ctx, resp.Body, events)
 	}()
 	return events, errs
 }
