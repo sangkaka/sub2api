@@ -913,7 +913,11 @@ Sub2API supports TRAE (Trae CN) accounts natively through the Solo Cloud-IDE OAu
 - Reasoning: `reasoning_effort` is mapped to TRAE native levels (`light` / `high` / `extra_high`) and clamped to the levels each model descriptor advertises; thinking output is returned in `delta.reasoning_content`
 - Model catalog: fetched per account from the upstream `/models` endpoint (model sync button / account test); explicit models must be bound in the catalog — unbound models fail loudly instead of silently falling back to the upstream default model
 - Scheduling: 4011/429/3004/4008 mark the account rate limited and cooled down; token expiry refreshes transparently 30 minutes ahead; 401/business code 1001 force-refreshes once
-- Out of scope: tool calls and image inputs are not translated in this version; check-in automation is not included
+- Tools: client tool definitions are bridged via a runtime prompt; the model's `<opencode_tool_call>` text blocks are translated back into OpenAI `delta.tool_calls` (text bridge, ids assigned by the gateway)
+- Images: OpenAI/Anthropic image parts are forwarded as remote renderer media parts (data URLs, remote URLs, base64)
+- 1M Max: opt in per account via credentials `max_mode: true`; only honored when the model descriptor explicitly advertises the profile (never synthesized)
+- Daily check-in: opt in per account via credentials `auto_checkin: true`; 9074 device-scoped rate limits back off exponentially and rotate the derived device id
+- Out of scope: Trae international (trae.ai) hosts
 
 ## Grok / xAI Support
 

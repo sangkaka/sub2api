@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strconv"
+	"math/big"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/trae"
@@ -211,12 +211,14 @@ func BuildTraeCommonParams(account *Account, model string) string {
 // TraeDeviceID 派生每账号稳定的 16 位数字设备标识（签到链路同款派生；
 // sha256("trae"+accountID) 取前 32 hex 转 10^16 取模）。
 func TraeDeviceID(accountID string) string {
-	digest := sha256Sum("trae" + accountID)
-	value, err := strconv.ParseUint(hex.EncodeToString(digest)[:32], 16, 64)
-	if err != nil {
+	digest := hex.EncodeToString(sha256Sum("trae" + accountID))
+	// 256-bit 摘要超出 uint64，用大数取模（与 trae2api 派生语义一致）。
+	value, ok := new(big.Int).SetString(digest, 16)
+	if !ok {
 		return "0000000000000000"
 	}
-	return fmt.Sprintf("%016d", value%1e16)
+	mod := new(big.Int).Mod(value, big.NewInt(1e16))
+	return fmt.Sprintf("%016s", mod.String())
 }
 
 func psdString(psd map[string]any, key, fallback string) string {

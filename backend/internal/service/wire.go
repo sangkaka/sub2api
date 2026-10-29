@@ -448,6 +448,18 @@ func ProvideTraeOAuthService(accountRepo AccountRepository, proxyRepo ProxyRepos
 	return NewTraeOAuthService(accountRepo, proxyRepo)
 }
 
+// ProvideTraeCheckinService creates and starts the TRAE daily checkin
+// automation (opt-in per account via credentials auto_checkin=true).
+func ProvideTraeCheckinService(
+	accountRepo AccountRepository,
+	traeOAuthService *TraeOAuthService,
+	traeTokenProvider *TraeTokenProvider,
+) *TraeCheckinService {
+	svc := NewTraeCheckinService(accountRepo, traeOAuthService, traeTokenProvider)
+	svc.Start()
+	return svc
+}
+
 // ProvideTraeTokenProvider creates TraeTokenProvider with OAuthRefreshAPI
 // injection and returns it together with its refresh executor so the token
 // refresh service can register the same refresher.

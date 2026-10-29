@@ -85,8 +85,15 @@ func FlattenMessages(messages []ChatMessage) string {
 				parts = append(parts, "[System]\n"+content)
 			}
 		case "assistant":
+			assistantParts := make([]string, 0, 2)
 			if strings.TrimSpace(content) != "" {
-				parts = append(parts, "[Assistant]\n"+content)
+				assistantParts = append(assistantParts, content)
+			}
+			if toolHistory := SerializeAssistantToolCalls(m.ToolCalls); toolHistory != "" {
+				assistantParts = append(assistantParts, toolHistory)
+			}
+			if len(assistantParts) > 0 {
+				parts = append(parts, "[Assistant]\n"+strings.Join(assistantParts, "\n\n"))
 			}
 		case "tool":
 			toolID := m.ToolCallID
@@ -213,6 +220,8 @@ type Delta struct {
 	Content string
 	// Reasoning 进 delta.reasoning_content。
 	Reasoning string
+	// ToolCalls 是文本桥扫描出的客户端工具调用（delta.tool_calls）。
+	ToolCalls []ToolCall
 	// Heartbeat 为 true 时下发 SSE 注释行（: keepalive）而非 chunk。
 	Heartbeat bool
 }
@@ -292,12 +301,16 @@ type TurnResult struct {
 	Truncated bool
 	// Err 是 error 事件的归类结果（nil 表示正常收尾）。
 	Err *UpstreamError
+	// ToolCalls 是文本桥扫描出的全部调用（非流式组装 message.tool_calls 用）。
+	ToolCalls []ToolCall
 }
 
 // StreamTranslator 把 Remote SSE 事件流翻译为 OpenAI 增量。非并发安全，
 // 每个上游会话轮次一个实例。
 type StreamTranslator struct {
 	model         string
+	toolScanner   ToolCallScanner
+	hasToolCalls  bool
 	started       bool
 	sawOutput     bool // 已观察到模型输出（正文/思考/usage），错误时不得重放
 	reasoning     map[string]*textAccumulator
@@ -305,7 +318,8 @@ type StreamTranslator struct {
 	planVisible   map[string]*textAccumulator
 	message       textAccumulator
 	messageText   string
-	streamed      string
+	streamed      string // 扫描后的可见正文（对外 Content）
+	streamedRaw   string // 扫描前的原始正文（快照差分基准，含工具标记）
 	planText      string
 	usage         *Usage
 	finish        string
@@ -400,11 +414,27 @@ func (t *StreamTranslator) processPlanItem(data map[string]any) []Delta {
 	}
 	if contentDelta := visibleState.delta(planContent(data)); contentDelta != "" {
 		t.planText += contentDelta
-		if public := textDelta(t.streamed, mergePlanMessageText(t.planText, t.messageText)); public != "" {
-			t.streamed += public
+		if public := textDelta(t.streamedRaw, mergePlanMessageText(t.planText, t.messageText)); public != "" {
 			t.sawOutput = true
-			deltas = append(deltas, Delta{Content: public})
+			deltas = append(deltas, t.contentDelta(public)...)
 		}
+	}
+	return deltas
+}
+
+// contentDelta 把正文增量经工具标记扫描器分流：标记外文本透出（并计入
+// streamed），完整 <opencode_tool_call> 块转为 ToolCalls 增量。
+func (t *StreamTranslator) contentDelta(text string) []Delta {
+	t.streamedRaw += text
+	visible, calls := t.toolScanner.Feed(text)
+	t.streamed += visible
+	var deltas []Delta
+	if visible != "" {
+		deltas = append(deltas, Delta{Content: visible})
+	}
+	if len(calls) > 0 {
+		t.hasToolCalls = true
+		deltas = append(deltas, Delta{ToolCalls: calls})
 	}
 	return deltas
 }
@@ -416,10 +446,9 @@ func (t *StreamTranslator) processMessage(data map[string]any) []Delta {
 	}
 	if delta := t.message.delta(text); delta != "" {
 		t.messageText = t.message.previous
-		if public := textDelta(t.streamed, mergePlanMessageText(t.planText, t.messageText)); public != "" {
-			t.streamed += public
+		if public := textDelta(t.streamedRaw, mergePlanMessageText(t.planText, t.messageText)); public != "" {
 			t.sawOutput = true
-			return []Delta{{Content: public}}
+			return t.contentDelta(public)
 		}
 	}
 	return nil
@@ -442,12 +471,16 @@ func (t *StreamTranslator) Finalize(streamEndedWithoutDone bool) (*TurnResult, [
 		}
 	}
 	merged := mergePlanMessageText(t.planText, t.messageText)
-	if public := textDelta(t.streamed, merged); public != "" && strings.TrimSpace(public) != "" {
-		t.streamed += public
-		deltas = append(deltas, Delta{Content: public})
+	if public := textDelta(t.streamedRaw, merged); public != "" && strings.TrimSpace(public) != "" {
+		deltas = append(deltas, t.contentDelta(public)...)
+	}
+	if tail := t.toolScanner.Flush(); tail != "" {
+		t.streamed += tail
+		deltas = append(deltas, Delta{Content: tail})
 	}
 	t.result = TurnResult{
 		Content:       t.streamed,
+		ToolCalls:     t.toolScanner.Calls(),
 		Reasoning:     joinReasoning(t.reasoning, t.reasoningKeys),
 		Usage:         t.usage,
 		FinishReason:  t.finish,

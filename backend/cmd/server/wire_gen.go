@@ -163,6 +163,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	grokTokenProvider := service.ProvideGrokTokenProvider(accountRepository, geminiTokenCache, grokOAuthService, oAuthRefreshAPI, tempUnschedCache)
 	traeOAuthService := service.ProvideTraeOAuthService(accountRepository, proxyRepository)
 	traeTokenProvider := service.ProvideTraeTokenProvider(accountRepository, geminiTokenCache, traeOAuthService, oAuthRefreshAPI)
+	_ = service.ProvideTraeCheckinService(accountRepository, traeOAuthService, traeTokenProvider)
 	openAIGatewayService := service.NewOpenAIGatewayService(accountRepository, usageLogRepository, usageBillingRepository, userRepository, userSubscriptionRepository, userGroupRateRepository, gatewayCache, configConfig, schedulerSnapshotService, concurrencyService, billingService, rateLimitService, billingCacheService, httpUpstream, deferredService, openAITokenProvider, grokTokenProvider, modelPricingResolver, channelService, balanceNotifyService, settingService, serviceUserPlatformQuotaRepository)
 	openAIGatewayService.SetTraeDeps(traeTokenProvider, traeOAuthService, nil)
 	geminiOAuthClient := repository.NewGeminiOAuthClient(configConfig)

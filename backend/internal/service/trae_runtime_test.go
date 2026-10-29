@@ -267,3 +267,39 @@ func setAccountRepoForTrae(t *testing.T, svc *OpenAIGatewayService, repo *traeRa
 	t.Helper()
 	svc.accountRepo = repo
 }
+
+// 工具桥端到端（PR-3.1）：正文里的 <opencode_tool_call> 标记转 delta.tool_calls，
+// finish_reason=tool_calls，标记文本不出现在可见正文。
+func TestForwardTraeChatCompletionsToolBridge(t *testing.T) {
+	events := strings.Join([]string{
+		`event: plan_item` + "\n" + `data: {"id":"p1","content":"Let me check <opencode_tool_call>{\"name\":\"read_file\",\"input\":{\"path\":\"main.go\"}}</opencode_tool_call>"}` + "\n\n",
+		`data: {"event":"token_usage","usage":{"prompt_tokens":9,"output_tokens":2}}` + "\n\n",
+		"event: done\ndata: [DONE]\n\n",
+	}, "")
+	upstream := newTraeTestUpstream(t, events)
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+
+	body, _ := json.Marshal(map[string]any{
+		"model":  "GLM-5.3",
+		"stream": true,
+		"tools": []map[string]any{{
+			"type":     "function",
+			"function": map[string]any{"name": "read_file", "parameters": map[string]any{"type": "object"}},
+		}},
+		"messages": []map[string]any{{"role": "user", "content": "read main.go"}},
+	})
+	c, rec := traeTestContext()
+	account := newTraeTestAccount()
+
+	result, err := svc.forwardTraeChatCompletions(context.Background(), c, account, body, "GLM-5.3")
+	require.NoError(t, err)
+	require.Equal(t, 9, result.Usage.InputTokens)
+
+	out := rec.Body.String()
+	require.Contains(t, out, `"tool_calls"`)
+	require.Contains(t, out, `"name":"read_file"`)
+	require.Contains(t, out, `"finish_reason":"tool_calls"`)
+	require.NotContains(t, out, "opencode_tool_call")
+	require.Contains(t, out, "Let me check ")
+}

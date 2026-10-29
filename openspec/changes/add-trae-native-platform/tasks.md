@@ -40,11 +40,10 @@
 
 ## 3. PR-3 增强（按需，逐项独立）
 
-- [ ] 3.1 工具调用：Remote 文本桥接（ToolCallAccumulator 移植）或评估 IDE 原生
-      `/api/ide/v2/llm_raw_chat`。
-- [ ] 3.2 图片输入（media parts）。
-- [ ] 3.3 1M Max 开关（strategy=max + context_window_size + mode_type）。
-- [ ] 3.4 签到自动化（后台定时 + 9074 指数退避 + 设备换代）。
+- [x] 3.1 工具调用：Remote 文本桥接——工具定义注入运行时提示 + `<opencode_tool_call>` 标记扫描转 delta.tool_calls（ToolCallAccumulator 的 Remote 必需子集；IDE 原生端点维持不采用，raw 固定 2001）。
+- [x] 3.2 图片输入（media parts，OpenAI/Anthropic 两种 part 形状 + data URL/远端 URL/base64）。
+- [x] 3.3 1M Max 开关（账号 credentials max_mode=true + descriptor 显式声明档位校验，绝不合成档位）。
+- [x] 3.4 签到自动化（后台 10 分钟扫描，账号 credentials auto_checkin=true 启用；9074 指数退避 + 设备换代，状态持久化 credentials）。
 
 ## 4. 内部迁移（账号 40 切流）
 

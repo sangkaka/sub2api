@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -102,17 +103,31 @@ func (s *OpenAIGatewayService) forwardTraeChatCompletions(
 		return nil, err
 	}
 
-	query := trae.FlattenMessages(toTraeMessages(chatReq.Messages))
+	messages := toTraeMessages(chatReq.Messages)
+	// 客户端工具运行时提示（PR-3.1 文本桥）：有 tools 定义时注入 query。
+	if toolPrompt := trae.BuildToolRuntimePrompt(toTraeToolDefinitions(chatReq.Tools), toolChoiceString(chatReq.ToolChoice), chatReq.ParallelToolCalls); toolPrompt != "" {
+		messages = append([]trae.ChatMessage{{Role: "system", Content: json.RawMessage(`"` + escapeJSONString(toolPrompt) + `"`)}}, messages...)
+	}
+	// 图片附件（PR-3.2）：作为 renderer media parts 追加到 query。
+	mediaParts := trae.MediaQueryParts(messages)
+	// 1M Max（PR-3.3）：账号开启且 descriptor 显式声明档位时钉住。
+	var maxModeFields map[string]any
+	if isTraeCredentialTrue(account, "max_mode") {
+		maxModeFields = descriptor.MaxModeFields()
+	}
+	query := trae.FlattenMessages(messages)
 	effort := trae.ClampReasoningEffort(trae.NormalizeReasoningEffort(chatReq.ReasoningEffort), descriptor)
 	commonParams := BuildTraeCommonParams(account, upstreamModel)
 
 	// 建会话；token 失效强刷一次后重试。
 	handle, err := client.CreateSession(ctx, token, trae.SessionRequest{
 		Query:           query,
+		ExtraQueryParts: mediaParts,
 		Model:           upstreamModel,
 		Descriptor:      descriptor,
 		ReasoningEffort: effort,
 		CommonParams:    commonParams,
+		MaxModeFields:   maxModeFields,
 	})
 	if err != nil {
 		if ue := trae.AsUpstreamError(err); ue != nil && ue.Kind == trae.ErrorKindAuth && s.traeTokenProvider != nil {
@@ -169,6 +184,7 @@ func (s *OpenAIGatewayService) streamTraeTurn(
 		firstTokenMs       *int
 		clientDisconnected bool
 		doneSeen           bool
+		toolCallBase       int
 		created            = time.Now().Unix()
 		chunkID            = fmt.Sprintf("chatcmpl-trae-%d", created)
 	)
@@ -234,6 +250,11 @@ loop:
 					chatDelta.Content = &delta.Content
 					emitted = true
 				}
+				if len(delta.ToolCalls) > 0 {
+					chatDelta.ToolCalls = toChatToolCalls(delta.ToolCalls, toolCallBase)
+					toolCallBase += len(delta.ToolCalls)
+					emitted = true
+				}
 				if emitted {
 					writeDelta(chatDelta, nil)
 				}
@@ -272,7 +293,7 @@ loop:
 		}
 	}
 	_ = streamFailed
-	return s.finishTraeStream(c, account, translator, clientDisconnected, doneSeen, firstTokenMs, originalModel, billingModel, upstreamModel, effort, chunkID, created, startTime, writeDelta)
+	return s.finishTraeStream(c, account, translator, clientDisconnected, doneSeen, toolCallBase, firstTokenMs, originalModel, billingModel, upstreamModel, effort, chunkID, created, startTime, writeDelta)
 }
 
 func isTraeHeartbeatEvent(ev trae.Event) bool {
@@ -285,6 +306,7 @@ func (s *OpenAIGatewayService) finishTraeStream(
 	account *Account,
 	translator *trae.StreamTranslator,
 	clientDisconnected, doneSeen bool,
+	toolCallBase int,
 	firstTokenMs *int,
 	originalModel, billingModel, upstreamModel, effort, chunkID string,
 	created int64,
@@ -300,7 +322,11 @@ func (s *OpenAIGatewayService) finishTraeStream(
 		if delta.Content != "" {
 			chatDelta.Content = &delta.Content
 		}
-		if chatDelta.Reasoning != nil || chatDelta.Content != nil {
+		if len(delta.ToolCalls) > 0 {
+			chatDelta.ToolCalls = toChatToolCalls(delta.ToolCalls, toolCallBase)
+			toolCallBase += len(delta.ToolCalls)
+		}
+		if chatDelta.Reasoning != nil || chatDelta.Content != nil || len(chatDelta.ToolCalls) > 0 {
 			writeDelta(chatDelta, nil)
 		}
 	}
@@ -311,6 +337,9 @@ func (s *OpenAIGatewayService) finishTraeStream(
 		finish := result.FinishReason
 		if finish == "" {
 			finish = "stop"
+		}
+		if len(result.ToolCalls) > 0 {
+			finish = "tool_calls"
 		}
 		writeDelta(apicompat.ChatDelta{}, &finish)
 		if result.Usage != nil {
@@ -391,6 +420,12 @@ func (s *OpenAIGatewayService) bufferedTraeTurn(
 	}
 
 	reasoning := result.Reasoning
+	message := gin.H{"role": "assistant", "content": result.Content, "reasoning_content": reasoning}
+	finishReason := result.FinishReason
+	if len(result.ToolCalls) > 0 {
+		message["tool_calls"] = toChatToolCalls(result.ToolCalls, 0)
+		finishReason = "tool_calls"
+	}
 	payload := gin.H{
 		"id":      fmt.Sprintf("chatcmpl-trae-%d", time.Now().Unix()),
 		"object":  "chat.completion",
@@ -398,8 +433,8 @@ func (s *OpenAIGatewayService) bufferedTraeTurn(
 		"model":   originalModel,
 		"choices": []gin.H{{
 			"index":         0,
-			"message":       gin.H{"role": "assistant", "content": result.Content, "reasoning_content": reasoning},
-			"finish_reason": result.FinishReason,
+			"message":       message,
+			"finish_reason": finishReason,
 		}},
 	}
 	if result.Usage != nil {
@@ -557,5 +592,86 @@ func (s *OpenAIGatewayService) SetTraeDeps(tokenProvider *TraeTokenProvider, oau
 	s.traeOAuthService = oauthService
 	if client != nil {
 		s.traeClient = client
+	}
+}
+
+// toTraeToolDefinitions 转换 apicompat 工具定义为桥接定义。
+func toTraeToolDefinitions(tools []apicompat.ChatTool) []trae.ToolDefinition {
+	out := make([]trae.ToolDefinition, 0, len(tools))
+	for _, tool := range tools {
+		definition := trae.ToolDefinition{Type: tool.Type}
+		if tool.Function != nil {
+			if payload, err := json.Marshal(tool.Function); err == nil {
+				definition.Function = payload
+			}
+		}
+		if definition.Type == "" {
+			definition.Type = "function"
+		}
+		out = append(out, definition)
+	}
+	return out
+}
+
+// toolChoiceString 从 ToolChoice 原文提取 none/required/函数名（对象形态）。
+func toolChoiceString(raw json.RawMessage) string {
+	value := strings.TrimSpace(string(raw))
+	if value == "" || value == "null" {
+		return ""
+	}
+	if unquoted := strings.Trim(value, `"`); unquoted != value {
+		return unquoted
+	}
+	var parsed struct {
+		Type     string `json:"type"`
+		Function struct {
+			Name string `json:"name"`
+		} `json:"function"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return ""
+	}
+	if parsed.Function.Name != "" {
+		return parsed.Function.Name
+	}
+	return parsed.Type
+}
+
+// toChatToolCalls 把扫描出的调用映射为 OpenAI wire 形状（Index 基数可配，
+// 流式与缓冲共用）。
+func toChatToolCalls(calls []trae.ToolCall, baseIndex int) []apicompat.ChatToolCall {
+	out := make([]apicompat.ChatToolCall, 0, len(calls))
+	for i, call := range calls {
+		index := baseIndex + i
+		out = append(out, apicompat.ChatToolCall{
+			Index: &index,
+			ID:    call.ID,
+			Type:  "function",
+			Function: apicompat.ChatFunctionCall{
+				Name:      call.Name,
+				Arguments: call.Arguments,
+			},
+		})
+	}
+	return out
+}
+
+func escapeJSONString(value string) string {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	return string(payload[1 : len(payload)-1])
+}
+
+// isTraeCredentialTrue 判定 credentials 布尔标记（容忍 "true"/true 两种存法）。
+func isTraeCredentialTrue(account *Account, key string) bool {
+	switch v := account.Credentials[key].(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true" || v == "1" || v == "yes" || v == "on"
+	default:
+		return false
 	}
 }

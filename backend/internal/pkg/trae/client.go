@@ -36,6 +36,8 @@ func (c *Client) setRemoteHeaders(req *http.Request, token string, stream bool) 
 type SessionRequest struct {
 	// Query 是扁平化后的 query JSON 字符串（FlattenMessages 产物）。
 	Query string
+	// ExtraQueryParts 追加到 query parts 数组的额外载荷（图片 media parts）。
+	ExtraQueryParts []map[string]any
 	// Model 是上游 config_name；Descriptor 必须随请求回带（custom_model）。
 	Model      string
 	Descriptor *ModelDescriptor
@@ -45,6 +47,9 @@ type SessionRequest struct {
 	CommonParams string
 	// BizSessionID 是稳定会话 id（账号+模型派生），上游按它复用会话上下文。
 	BizSessionID string
+	// MaxModeFields 非 nil 时（descriptor.MaxModeFields 产物）合并进
+	// initial_message，把会话钉在 1M Max 档。
+	MaxModeFields map[string]any
 }
 
 type initialMessage struct {
@@ -60,6 +65,46 @@ type initialMessage struct {
 	ModelIsPreset          bool           `json:"model_is_preset,omitempty"`
 	ModelProvider          string         `json:"model_provider,omitempty"`
 	CustomModel            map[string]any `json:"custom_model,omitempty"`
+	// ExtraFields 携带 1M Max 等档位字段（context_window_size、
+	// prompt_max_tokens、max_tokens、mode_type），经 map 合并输出。
+	ExtraFields map[string]any `json:"-"`
+}
+
+// MarshalJSON 把 ExtraFields 平铺进顶层（避免嵌套结构体）。
+func (m initialMessage) MarshalJSON() ([]byte, error) {
+	type alias initialMessage
+	base, err := json.Marshal(alias(m))
+	if err != nil {
+		return nil, err
+	}
+	if len(m.ExtraFields) == 0 {
+		return base, nil
+	}
+	merged := map[string]any{}
+	if err := json.Unmarshal(base, &merged); err != nil {
+		return nil, err
+	}
+	for key, value := range m.ExtraFields {
+		merged[key] = value
+	}
+	return json.Marshal(merged)
+}
+
+// appendQueryParts 把额外 parts（图片媒体载荷）追加到 query parts 数组。
+func appendQueryParts(query string, extra []map[string]any) string {
+	var parts []map[string]any
+	if err := json.Unmarshal([]byte(query), &parts); err != nil || parts == nil {
+		parts = []map[string]any{}
+	}
+	return string(mustJSON(append(parts, extra...)))
+}
+
+func mustJSON(v any) []byte {
+	payload, err := json.Marshal(v)
+	if err != nil {
+		return []byte("[]")
+	}
+	return payload
 }
 
 type createSessionBody struct {
@@ -93,10 +138,14 @@ func (c *Client) CreateSession(ctx context.Context, token string, sr SessionRequ
 			customModel["reasoning_effort"] = sr.ReasoningEffort
 		}
 	}
+	query := sr.Query
+	if len(sr.ExtraQueryParts) > 0 {
+		query = appendQueryParts(query, sr.ExtraQueryParts)
+	}
 	message := initialMessage{
 		ChatSessionID:          "",
 		Content:                []any{},
-		Query:                  sr.Query,
+		Query:                  query,
 		ModelName:              sr.Model,
 		AgentType:              agentTypeAgent,
 		AgentID:                agentTypeAgent,
@@ -106,6 +155,17 @@ func (c *Client) CreateSession(ctx context.Context, token string, sr SessionRequ
 		ModelIsPreset:          sr.Descriptor.IsPreset,
 		ModelProvider:          sr.Descriptor.Provider,
 		CustomModel:            customModel,
+	}
+	if len(sr.MaxModeFields) > 0 {
+		message.ExtraFields = map[string]any{}
+		for key, value := range sr.MaxModeFields {
+			switch key {
+			case "model_selection_strategy":
+				message.ModelSelectionStrategy = value.(string)
+			default:
+				message.ExtraFields[key] = value
+			}
+		}
 	}
 	body := createSessionBody{
 		Mode:              RemoteSessionModeAgent,

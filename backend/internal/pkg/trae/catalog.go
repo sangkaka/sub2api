@@ -158,3 +158,91 @@ var StaticFallbackModelIDs = []string{
 	"doubao-seed-1.6",
 	"qwen3-coder-plus",
 }
+
+// SupportsMaxMode 仅在 descriptor 显式声明 max_mode=true 且三项线上限
+// （max context ≥ 1M、prompt_max_tokens、max_tokens）齐备时为真——绝不
+// 凭模型名合成 1M/936K/64K 配置（上游服务端默认会重建被禁止的合成档）。
+func (m *ModelDescriptor) SupportsMaxMode() bool {
+	if m == nil || m.Raw == nil {
+		return false
+	}
+	enabled, _ := m.Raw["max_mode"].(bool)
+	if !enabled {
+		return false
+	}
+	maxContext := m.maxContextTokens()
+	return maxContext >= 1_000_000 && m.positiveLimit("prompt_max_tokens") > 0 && m.positiveLimit("max_tokens") > 0
+}
+
+// MaxModeFields 返回把会话钉在 1M Max 档的线上字段（initial_message 层）。
+// 无有效档位时返回 nil。
+func (m *ModelDescriptor) MaxModeFields() map[string]any {
+	if !m.SupportsMaxMode() {
+		return nil
+	}
+	fields := map[string]any{
+		"model_selection_strategy": "max",
+	}
+	if maxContext := m.maxContextTokens(); maxContext > 0 {
+		fields["context_window_size"] = maxContext
+	}
+	if v := m.positiveLimit("prompt_max_tokens"); v > 0 {
+		fields["prompt_max_tokens"] = v
+	}
+	if v := m.positiveLimit("max_tokens"); v > 0 {
+		fields["max_tokens"] = v
+	}
+	fields["mode_type"] = 1
+	return fields
+}
+
+func (m *ModelDescriptor) maxContextTokens() int {
+	if m == nil || m.Raw == nil {
+		return 0
+	}
+	candidates := []int{}
+	if v := m.positiveLimit("context_window_size"); v > 0 {
+		candidates = append(candidates, v)
+	}
+	if v := m.positiveLimit("max_context"); v > 0 {
+		candidates = append(candidates, v)
+	}
+	if tokens, ok := m.Raw["context_window_tokens"].(map[string]any); ok {
+		if v := positiveIntFrom(tokens["max"]); v > 0 {
+			candidates = append(candidates, v)
+		}
+	}
+	max := 0
+	for _, v := range candidates {
+		if v > max {
+			max = v
+		}
+	}
+	return max
+}
+
+func (m *ModelDescriptor) positiveLimit(key string) int {
+	if m == nil || m.Raw == nil {
+		return 0
+	}
+	return positiveIntFrom(m.Raw[key])
+}
+
+func positiveIntFrom(v any) int {
+	switch n := v.(type) {
+	case float64:
+		if n > 0 {
+			return int(n)
+		}
+	case int:
+		if n > 0 {
+			return n
+		}
+	case string:
+		var parsed int
+		if _, err := fmt.Sscanf(strings.TrimSpace(n), "%d", &parsed); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return 0
+}
