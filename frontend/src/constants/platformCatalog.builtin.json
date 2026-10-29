@@ -302,6 +302,12 @@
       "display_name": "Fish Audio",
       "gateway": "openai",
       "cn_provider": false
+    },
+    {
+      "id": "trae",
+      "display_name": "TRAE",
+      "gateway": "openai",
+      "cn_provider": false
     }
   ],
   "composite_precedence": [
@@ -321,6 +327,7 @@
     "command_code",
     "cline",
     "leonardo",
-    "fish"
+    "fish",
+    "trae"
   ]
 }
