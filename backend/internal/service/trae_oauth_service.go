@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/trae"
@@ -43,15 +44,28 @@ func (s *TraeOAuthService) upstreamClient() *trae.Client {
 func (s *TraeOAuthService) UpstreamClient(ctx context.Context, account *Account) *trae.Client {
 	base := s.upstreamClient()
 	out := &trae.Client{
-		APIHost:    base.APIHost,
-		RemoteBase: base.RemoteBase,
-		WebOrigin:  base.WebOrigin,
-		HTTP:       base.HTTP,
+		APIHost:     base.APIHost,
+		RemoteBase:  base.RemoteBase,
+		WebOrigin:   base.WebOrigin,
+		ExchangeHost: firstNonEmptyString(traeAccountAuthHost(account), base.ExchangeHost),
+		HTTP:        base.HTTP,
 	}
 	if out.HTTP == nil {
 		out.ProxyURL = s.resolveAccountProxyURL(ctx, account)
 	}
 	return out
+}
+
+// traeAccountAuthHost 读取账号凭据 auth_host：签发/刷新该账号 refresh_token
+// 的 Cloud-IDE 控制台域名。企业版（ToB 租户）账号为
+// console.enterprise.trae.cn，其 rt 在默认 api.trae.cn 兑换会被拒
+// （"refresh token is invalid"）；个人版留空走默认。仅作用于 ExchangeToken，
+// GetUserInfo / entitlement / 签到端点对两种签发的 token 均在默认域名可用。
+func traeAccountAuthHost(account *Account) string {
+	if account == nil {
+		return ""
+	}
+	return strings.TrimRight(strings.TrimSpace(account.GetCredential("auth_host")), "/")
 }
 
 func (s *TraeOAuthService) resolveAccountProxyURL(ctx context.Context, account *Account) string {
@@ -117,10 +131,13 @@ func BuildTraeCredentials(result *trae.ExchangeTokenResult) map[string]any {
 	if result.UserInfo.UserID != "" {
 		creds["user_id"] = result.UserInfo.UserID
 	}
-	if expiresAt, ok := trae.NormalizeExpireAt(result.TokenExpireAt); ok {
+	if expiresAt, ok := trae.NormalizeExpireAt(string(result.TokenExpireAt)); ok {
 		creds["expires_at"] = expiresAt.Format(time.RFC3339)
+	} else if exp, ok := trae.JWTExp(result.Token); ok {
+		// 企业控制台的兑换响应可能不带 TokenExpireAt，回退读 JWT 的 exp。
+		creds["expires_at"] = exp.Format(time.RFC3339)
 	}
-	if refreshExpiresAt, ok := trae.NormalizeExpireAt(result.RefreshExpireAt); ok {
+	if refreshExpiresAt, ok := trae.NormalizeExpireAt(string(result.RefreshExpireAt)); ok {
 		creds["refresh_expires_at"] = refreshExpiresAt.Format(time.RFC3339)
 	}
 	providerSpecific := map[string]any{}

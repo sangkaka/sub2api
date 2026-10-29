@@ -2,6 +2,7 @@ package trae
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -334,6 +335,60 @@ func TestExchangeTokenAuthError(t *testing.T) {
 	ue := AsUpstreamError(err)
 	require.NotNil(t, ue)
 	require.Equal(t, ErrorKindAuth, ue.Kind)
+}
+
+// 企业控制台（console.enterprise.trae.cn）的兑换响应是 {code,message,Data}
+// 包装、时间为数字毫秒；ExchangeHost 覆盖仅作用于 ExchangeToken。
+func TestExchangeTokenEnterpriseWire(t *testing.T) {
+	exchangeHit := false
+	exchangeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, exchangeTokenPath, r.URL.Path)
+		exchangeHit = true
+		fmt.Fprint(w, `{"code":0,"message":"","Data":{"Token":"jwt-ent","RefreshToken":"rt-ent","RefreshExpireAt":1801054911755}}`)
+	}))
+	defer exchangeServer.Close()
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("api host must not be hit by ExchangeToken: %s", r.URL.Path)
+	}))
+	defer apiServer.Close()
+
+	client := &Client{APIHost: apiServer.URL, ExchangeHost: exchangeServer.URL}
+	result, err := client.ExchangeToken(context.Background(), "rt-ent-old", "")
+	require.NoError(t, err)
+	require.True(t, exchangeHit)
+	require.Equal(t, "jwt-ent", result.Token)
+	require.Equal(t, "rt-ent", result.RefreshToken)
+	// 数字毫秒时间戳归一化为字符串后仍可被 NormalizeExpireAt 解析。
+	_, ok := NormalizeExpireAt(string(result.RefreshExpireAt))
+	require.True(t, ok)
+}
+
+func TestExchangeTokenEnterpriseCodeError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"code":20101,"message":"Token 无效：refresh token is invalid.","Data":null}`)
+	}))
+	defer server.Close()
+
+	client := &Client{ExchangeHost: server.URL}
+	_, err := client.ExchangeToken(context.Background(), "stale-rt", "")
+	require.Error(t, err)
+	ue := AsUpstreamError(err)
+	require.NotNil(t, ue)
+	require.Equal(t, ErrorKindAuth, ue.Kind)
+	require.Contains(t, ue.Message, "20101")
+}
+
+func TestJWTExp(t *testing.T) {
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"exp":1794488528}`))
+	exp, ok := JWTExp("header." + payload + ".sig")
+	require.True(t, ok)
+	require.Equal(t, int64(1794488528), exp.Unix())
+
+	_, ok = JWTExp("not-a-jwt")
+	require.False(t, ok)
+	noExp := base64.RawURLEncoding.EncodeToString([]byte(`{"no_exp":1}`))
+	_, ok = JWTExp("header." + noExp + ".sig")
+	require.False(t, ok)
 }
 
 // CreateSession 请求形状：agent_type/agent_id 钉住、manual 策略、custom_model

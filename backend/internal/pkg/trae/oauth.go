@@ -3,6 +3,7 @@ package trae
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +19,11 @@ import (
 type Client struct {
 	// APIHost 覆盖 Cloud-IDE API 域名（默认 DefaultAPIHost）。
 	APIHost string
+	// ExchangeHost 覆盖 ExchangeToken 的域名。企业版账号（ToB 租户）的
+	// refresh_token 由 console.enterprise.trae.cn 签发，只能在该域名兑换；
+	// 个人版留空（随 APIHost）。仅作用于 ExchangeToken——GetUserInfo /
+	// entitlement / 签到端点对两种签发的 token 都在默认域名可用。
+	ExchangeHost string
 	// RemoteBase 覆盖 Remote 会话协议基址（默认 DefaultRemoteBase）。
 	RemoteBase string
 	// WebOrigin 覆盖浏览器 Origin/Referer（默认 DefaultWebOrigin）。
@@ -33,6 +39,13 @@ func (c *Client) apiHost() string {
 		return strings.TrimRight(v, "/")
 	}
 	return DefaultAPIHost
+}
+
+func (c *Client) exchangeHost() string {
+	if v := strings.TrimSpace(c.ExchangeHost); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return c.apiHost()
 }
 
 func (c *Client) remoteBase() string {
@@ -72,13 +85,34 @@ type ExchangeTokenRequest struct {
 	UserID       string `json:"UserID"`
 }
 
-// ExchangeTokenResult 是 ExchangeToken 响应的 Result 载荷。
+// ExchangeTokenResult 是 ExchangeToken 响应的载荷。标准个人版端点包在
+// Result 里；企业控制台（console.enterprise.trae.cn）包在 Data 里且时间戳
+// 为数字毫秒（flexTimestamp 兼容两种形态）。
 type ExchangeTokenResult struct {
-	Token           string       `json:"Token"`
-	RefreshToken    string       `json:"RefreshToken"`
-	TokenExpireAt   string       `json:"TokenExpireAt"`
-	RefreshExpireAt string       `json:"RefreshExpireAt"`
-	UserInfo        TraeUserInfo `json:"UserInfo"`
+	Token           string        `json:"Token"`
+	RefreshToken    string        `json:"RefreshToken"`
+	TokenExpireAt   flexTimestamp `json:"TokenExpireAt"`
+	RefreshExpireAt flexTimestamp `json:"RefreshExpireAt"`
+	UserInfo        TraeUserInfo  `json:"UserInfo"`
+}
+
+// flexTimestamp 兼容字符串与数字（毫秒/秒时间戳）两种 JSON 形态，统一为
+// NormalizeExpireAt 可解析的字符串。
+type flexTimestamp string
+
+func (f *flexTimestamp) UnmarshalJSON(data []byte) error {
+	text := strings.TrimSpace(string(data))
+	text = strings.Trim(text, `"`)
+	if text == "" || text == "null" {
+		*f = ""
+		return nil
+	}
+	if n, err := strconv.ParseFloat(text, 64); err == nil {
+		*f = flexTimestamp(strconv.FormatInt(int64(n), 10))
+		return nil
+	}
+	*f = flexTimestamp(text)
+	return nil
 }
 
 // TraeUserInfo 是上游用户身份信息（ExchangeToken 响应 / GetUserInfo 共享形状）。
@@ -96,6 +130,11 @@ type TraeUserInfo struct {
 
 type exchangeTokenResponse struct {
 	Result *ExchangeTokenResult `json:"Result"`
+	// Data 是企业控制台的载荷包装（与 Result 二选一）。
+	Data *ExchangeTokenResult `json:"Data"`
+	// Code/Message 是企业控制台的业务码：0 成功，非 0 失败。
+	Code    int    `json:"code"`
+	Message string `json:"message"`
 }
 
 // ExchangeToken 用 refresh_token 兑换新的 Cloud-IDE-JWT。refresh_token 每次
@@ -116,7 +155,7 @@ func (c *Client) ExchangeToken(ctx context.Context, refreshToken, userID string)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiHost()+exchangeTokenPath, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.exchangeHost()+exchangeTokenPath, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -141,13 +180,33 @@ func (c *Client) ExchangeToken(ctx context.Context, refreshToken, userID string)
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return nil, fmt.Errorf("trae: exchange token parse response: %w", err)
 	}
-	if parsed.Result == nil || parsed.Result.Token == "" {
+	payload := parsed.Result
+	if payload == nil {
+		payload = parsed.Data
+	}
+	if payload == nil || payload.Token == "" {
+		if parsed.Code != 0 || parsed.Message != "" {
+			return nil, &UpstreamError{
+				Kind:    ErrorKindAuth,
+				Code:    strconv.Itoa(parsed.Code),
+				Message: fmt.Sprintf("ExchangeToken code %d: %s", parsed.Code, firstNonEmpty(parsed.Message, truncate(string(raw), 300))),
+			}
+		}
 		return nil, &UpstreamError{
 			Kind:    ErrorKindAuth,
 			Message: fmt.Sprintf("ExchangeToken returned no token: %s", truncate(string(raw), 300)),
 		}
 	}
-	return parsed.Result, nil
+	return payload, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // GetUserInfo 拉取上游用户信息。注意该端点鉴权头是 x-cloudide-token，
@@ -257,6 +316,26 @@ func (c *Client) FetchEntitlementUsage(ctx context.Context, token string) (*Enti
 		}
 	}
 	return out, nil
+}
+
+// JWTExp 从 Cloud-IDE-JWT 的 exp 声明解析过期时间。企业控制台的兑换响应可能
+// 不带 TokenExpireAt，回退用此值驱动刷新调度。
+func JWTExp(token string) (time.Time, bool) {
+	parts := strings.Split(strings.TrimSpace(token), ".")
+	if len(parts) != 3 {
+		return time.Time{}, false
+	}
+	claims := struct {
+		Exp int64 `json:"exp"`
+	}{}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.Exp == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(claims.Exp, 0), true
 }
 
 // NormalizeExpireAt 把上游时间戳归一化为 time.Time。上游混用秒级/毫秒级
