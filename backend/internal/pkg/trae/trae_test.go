@@ -347,7 +347,8 @@ func TestExchangeTokenEnterpriseWire(t *testing.T) {
 			fmt.Fprint(w, `{"code":0,"message":"","Data":{"Token":"jwt-ent","RefreshToken":"rt-ent","RefreshExpireAt":1801054911755}}`)
 		case getUserInfoPath:
 			userInfoHit = true
-			fmt.Fprint(w, `{"Result":{"UserID":"433084928","Region":"CN"}}`)
+			// 企业包装：用户信息嵌在 Data.UserInfo。
+			fmt.Fprint(w, `{"code":0,"message":"","Data":{"UserInfo":{"UserID":"433084928","Region":"CN","AIRegion":"CN","Password":"must-be-ignored"}}}`)
 		default:
 			t.Fatalf("unexpected path on cloud-ide host: %s", r.URL.Path)
 		}

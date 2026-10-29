@@ -242,14 +242,32 @@ func (c *Client) GetUserInfo(ctx context.Context, token string) (*TraeUserInfo, 
 	}
 	var parsed struct {
 		Result *TraeUserInfo `json:"Result"`
+		// 企业控制台包装：{code,message,Data:{UserInfo:{...}}}（响应含
+		// Password 等字段，仅解析 TraeUserInfo 已知字段，其余忽略）。
+		Data *struct {
+			UserInfo *TraeUserInfo `json:"UserInfo"`
+		} `json:"Data"`
+		Code    int    `json:"code"`
+		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return nil, fmt.Errorf("trae: get user info parse response: %w", err)
 	}
-	if parsed.Result == nil || parsed.Result.UserID == "" {
+	info := parsed.Result
+	if info == nil && parsed.Data != nil {
+		info = parsed.Data.UserInfo
+	}
+	if info == nil || info.UserID == "" {
+		if parsed.Code != 0 || parsed.Message != "" {
+			return nil, &UpstreamError{
+				Kind:    ErrorKindAuth,
+				Code:    strconv.Itoa(parsed.Code),
+				Message: fmt.Sprintf("GetUserInfo code %d: %s", parsed.Code, firstNonEmpty(parsed.Message, truncate(string(raw), 300))),
+			}
+		}
 		return nil, fmt.Errorf("trae: get user info: empty Result")
 	}
-	return parsed.Result, nil
+	return info, nil
 }
 
 // EntitlementUsage 是 ide_user_ent_usage 的解析结果：积分包与账号并发上限。
