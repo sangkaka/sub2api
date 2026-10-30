@@ -668,6 +668,12 @@ func (t *IDETranslator) accumulateToolCalls(items []any) []ToolCall {
 			t.logDroppedToolEntry(entry, "unattributable: no index/id/name")
 			continue
 		}
+		// 并入「最近调用」兜底只接受新值起点片段；孤立的 } ] 空串闭合
+		// 帧是上游并发流遗留，丢弃（对齐 trae2api 的 junk-drop）。
+		if id == "" && name == "" && frag != "" && !startsNewJSONValue(frag) && entry["index"] == nil {
+			t.logDroppedToolEntry(entry, "orphan closing fragment")
+			continue
+		}
 		if id != "" && acc.id == "" {
 			acc.id = id
 		}
@@ -680,6 +686,15 @@ func (t *IDETranslator) accumulateToolCalls(items []any) []ToolCall {
 			slot := acc.slot
 			fragments = append(fragments, ToolCall{ID: id, Name: name, Arguments: "", Index: &slot})
 			continue
+		}
+		// 上游并发工具流会把多个调用的参数串在同一个 index 下连续发：
+		// 当前槽位参数已是完整 JSON 而新片段以 { / [ 开头时，是新调用
+		// 复用了 index，拆新槽位并继承工具名（对齐 trae2api 4f9451e 的
+		// 并发流防御，避免 {"a":1}{"b":2} 拼接污染）。
+		if frag != "" && acc.args.Len() > 0 && startsNewJSONValue(frag) && json.Valid([]byte(acc.args.String())) {
+			split := &ideToolAccumulator{name: acc.name}
+			t.registerToolAcc(split)
+			acc = split
 		}
 		acc.args.WriteString(frag)
 		if t.ToolsRequiringArgs != nil && acc.wrapHoldState != ideWrapStreaming && acc.args.String() == "{}" && t.ToolsRequiringArgs[acc.name] {
@@ -752,7 +767,29 @@ func (t *IDETranslator) resolveToolAccumulator(entry map[string]any, id, name st
 		t.registerToolAcc(acc)
 		return acc
 	}
+	// 无 index 无 id 无 name 的片段：并入最近一个已命名调用（上游并发
+	// 流的有序续片）。调用方负责丢弃不以 { / [ 开头的孤立闭合帧。
+	for i := len(t.toolAccSeq) - 1; i >= 0; i-- {
+		if t.toolAccSeq[i].name != "" {
+			return t.toolAccSeq[i]
+		}
+	}
 	return nil
+}
+
+// startsNewJSONValue 判断片段是否以新的 JSON 对象/数组开头。
+func startsNewJSONValue(frag string) bool {
+	for _, r := range frag {
+		switch r {
+		case ' ', '\t', '\r', '\n':
+			continue
+		case '{', '[':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 func (t *IDETranslator) toolAccSlot(index int) *ideToolAccumulator {
@@ -778,9 +815,18 @@ func (t *IDETranslator) assembleToolCalls() []ToolCall {
 		return nil
 	}
 	out := make([]ToolCall, 0, len(t.toolAccSeq))
+outer:
 	for _, acc := range t.toolAccSeq {
 		if acc.name == "" {
 			continue
+		}
+		if acc.degenHold && acc.args.String() == "{}" {
+			// 混合回合中的 {} 头帧不进最终结果（真调用已拆到新槽位）。
+			for _, other := range t.toolAccSeq {
+				if other.name != "" && !other.degenHold {
+					continue outer
+				}
+			}
 		}
 		if repaired := repairWrappedToolArguments(acc.args.String()); repaired != acc.args.String() {
 			acc.args.Reset()
@@ -833,12 +879,21 @@ func (t *IDETranslator) Finalize(streamEndedWithoutDone bool) (*TurnResult, []De
 	// 补发，保持行为完整。
 	var tail []Delta
 	aborting := t.result.DegenerateToolCalls
+	// 同 index 复用拆分后可能出现「{} 头帧 + 真参数调用」混合回合：
+	// 空头帧是上游复用痕迹，直接抑制，只交付真调用。
+	hasRealCall := false
+	for _, acc := range t.toolAccSeq {
+		if acc.name != "" && !acc.degenHold {
+			hasRealCall = true
+			break
+		}
+	}
 	for _, acc := range t.toolAccSeq {
 		if acc.name == "" {
 			continue
 		}
 		if acc.degenHold && !acc.owesBytes {
-			if !aborting {
+			if !aborting && !hasRealCall {
 				slot := acc.slot
 				tail = append(tail, Delta{ToolCalls: []ToolCall{{
 					ID: acc.id, Name: acc.name, Index: &slot, Arguments: acc.args.String(),

@@ -450,3 +450,93 @@ func TestIDETranslatorEmptyArgsPassWithoutGuard(t *testing.T) {
 		require.False(t, tr.ShouldAbortTurn())
 	}
 }
+
+// 同 index 多调用串发（trae2api 4f9451e 实证的上游行为）：前一个调用参数
+// 已闭合、新片段以 { 开头 → 拆新槽位继承工具名，不产生 {"a":1}{"b":2} 拼接。
+func TestIDETranslatorIndexReuseSplitsCalls(t *testing.T) {
+	tr := NewIDETranslator("m")
+	tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"index": 0, "id": "call_a",
+			"function_call": map[string]any{"name": "Bash", "arguments": `{"command":"ls"}`},
+		}},
+	}})
+	deltas := tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"index":         0,
+			"function_call": map[string]any{"arguments": `{"command":"git status"}`},
+		}},
+	}})
+	// 新片段必须以新槽位（index 1）下发且带继承名。
+	require.Len(t, deltas, 1)
+	call := deltas[0].ToolCalls[0]
+	require.NotNil(t, call.Index)
+	require.Equal(t, 1, *call.Index)
+	require.Equal(t, "Bash", call.Name)
+	require.Equal(t, `{"command":"git status"}`, call.Arguments)
+
+	result, _ := tr.Finalize(false)
+	require.Len(t, result.ToolCalls, 2, "闭合后复用 index 的新片段是独立调用")
+	require.Equal(t, `{"command":"ls"}`, result.ToolCalls[0].Arguments)
+	require.Equal(t, `{"command":"git status"}`, result.ToolCalls[1].Arguments)
+	require.Equal(t, "Bash", result.ToolCalls[1].Name)
+}
+
+// {} 头帧 + 同 index 真参数（上游复用痕迹的真身）：空头帧抑制、真调用交付。
+func TestIDETranslatorEmptyHeadFramePlusRealCall(t *testing.T) {
+	tr := NewDegenerateGuardIDETranslator("m", map[string]bool{"Bash": true})
+	tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"index": 0, "id": "call_h",
+			"function_call": map[string]any{"name": "Bash", "arguments": "{}"},
+		}},
+	}})
+	// 真调用片段在第二个事件即时流式下发（新槽位 + 继承名），不在收尾。
+	deltas2 := tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"index":         0,
+			"function_call": map[string]any{"arguments": `{"command":"ls -la"}`},
+		}},
+	}})
+	require.False(t, tr.ShouldAbortTurn(), "已有真调用，不作废")
+	tr.ProcessEvent(Event{Name: "done", Data: map[string]any{"finish_reason": "tool_calls"}})
+	require.Len(t, deltas2, 1)
+	call := deltas2[0].ToolCalls[0]
+	require.NotNil(t, call.Index)
+	require.Equal(t, 1, *call.Index)
+	require.Equal(t, "Bash", call.Name)
+	require.Equal(t, `{"command":"ls -la"}`, call.Arguments)
+	result, tail := tr.Finalize(false)
+	require.Len(t, result.ToolCalls, 1, "{} 头帧不进结果")
+	require.Equal(t, `{"command":"ls -la"}`, result.ToolCalls[0].Arguments)
+	require.Equal(t, "Bash", result.ToolCalls[0].Name)
+	require.Empty(t, tail)
+}
+
+// 孤立闭合帧（无 index/id/name、不以 { [ 开头）丢弃；无 index 的有序无名
+// 片段并入最近命名调用。
+func TestIDETranslatorOrphanAndOrderedFragments(t *testing.T) {
+	tr := NewIDETranslator("m")
+	tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"index": 0, "id": "call_o",
+			"function_call": map[string]any{"name": "Bash", "arguments": ""},
+		}},
+	}})
+	// 无 index 无名续片 → 并入 call_o。
+	tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"function_call": map[string]any{"arguments": `{"command":"pwd"}`},
+		}},
+	}})
+	// 孤立闭合帧 → 丢弃。
+	deltas := tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"function_call": map[string]any{"arguments": `}"`},
+		}},
+	}})
+	require.Empty(t, deltas)
+	result, _ := tr.Finalize(false)
+	require.Len(t, result.ToolCalls, 1)
+	require.Equal(t, `{"command":"pwd"}`, result.ToolCalls[0].Arguments)
+}
