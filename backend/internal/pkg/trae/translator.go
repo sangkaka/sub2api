@@ -303,6 +303,10 @@ type TurnResult struct {
 	Err *UpstreamError
 	// ToolCalls 是文本桥扫描出的全部调用（非流式组装 message.tool_calls 用）。
 	ToolCalls []ToolCall
+	// DegenerateToolCalls 为 true 表示回合内所有工具调用的参数都是 "{}"
+	// 且这些调用因「目标工具有必填参数」被扣住未下发（客户端未收到任何
+	// 工具字节），上层可作废本回合带矫正提示重试。
+	DegenerateToolCalls bool
 }
 
 // StreamTranslator 把 Remote SSE 事件流翻译为 OpenAI 增量。非并发安全，

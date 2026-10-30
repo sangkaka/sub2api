@@ -463,12 +463,21 @@ type IDETranslator struct {
 	// 定位，而不是只剩客户端症状。
 	shapeLogged int
 	dropLogged  int
-	usage       *Usage
-	finish      string
-	provider    string
-	upstreamErr *UpstreamError
-	result      TurnResult
-	finalized   bool
+	// ToolsRequiringArgs：有必填参数的工具名集合（{"{}"} 完整参数视为
+	// 退化）。nil 表示不过滤（行为与历史一致）。
+	ToolsRequiringArgs map[string]bool
+	// streamedOutput：是否已向客户端下发过 thinking/文本（作废重试的前
+	// 提是客户端未收到任何本回合内容）。
+	streamedOutput bool
+	// forwardedTool：是否透传过任何工具片段（含空参首帧——它会宣告
+	// tool_use 块）。作废重试要求一个都没发过。
+	forwardedTool bool
+	usage         *Usage
+	finish        string
+	provider      string
+	upstreamErr   *UpstreamError
+	result        TurnResult
+	finalized     bool
 }
 
 // ideToolAccumulator 聚合上游分片下发的单个工具调用：首帧带 id/name
@@ -487,6 +496,10 @@ type ideToolAccumulator struct {
 	wrapHoldState int
 	probe         []byte
 	owesBytes     bool
+	// degenHold：该调用的累计参数恰为 "{}" 且目标工具有必填参数（由
+	// ToolsRequiringArgs 判定）——参数已完整、形状退化，扣住不下发，
+	// 供回合级作废重试。
+	degenHold bool
 }
 
 const (
@@ -503,10 +516,38 @@ func NewIDETranslator(model string) *IDETranslator {
 	return &IDETranslator{model: model, finish: "stop"}
 }
 
+// NewDegenerateGuardIDETranslator 创建带空参退化守卫的翻译器：
+// toolsRequiringArgs 为有必填参数的工具名集合（nil 关闭守卫）。
+func NewDegenerateGuardIDETranslator(model string, toolsRequiringArgs map[string]bool) *IDETranslator {
+	tr := NewIDETranslator(model)
+	tr.ToolsRequiringArgs = toolsRequiringArgs
+	return tr
+}
+
 func (t *IDETranslator) Started() bool         { return t.started }
 func (t *IDETranslator) SawOutput() bool       { return t.sawOutput }
 func (t *IDETranslator) Model() string         { return t.model }
 func (t *IDETranslator) ProviderModel() string { return t.provider }
+
+// ShouldAbortTurn 判定空参退化回合可否整体作废：守卫开启、客户端未收到
+// 任何本回合内容（thinking/文本/工具片段都未下发），且所有命名调用全部
+// 被扣为 "{}" 退化。满足时上层可丢弃本回合带矫正提示重打。
+func (t *IDETranslator) ShouldAbortTurn() bool {
+	if t.ToolsRequiringArgs == nil || t.streamedOutput || t.forwardedTool {
+		return false
+	}
+	any := false
+	for _, acc := range t.toolAccSeq {
+		if acc.name == "" {
+			continue
+		}
+		if !acc.degenHold {
+			return false
+		}
+		any = true
+	}
+	return any
+}
 
 // FallbackError 判定 IDE 流中需要换入口重试的错误事件：模型在该入口
 // 不可服务（4001 参数无效 / 4023 服务异常 / 1005 不在目录——企业域名
@@ -561,11 +602,13 @@ func (t *IDETranslator) processOutput(data map[string]any) []Delta {
 		t.reasoning.WriteString(reasoning)
 		deltas = append(deltas, Delta{Reasoning: reasoning})
 		t.sawOutput = true
+		t.streamedOutput = true
 	}
 	if content, ok := data["response"].(string); ok && content != "" {
 		t.content.WriteString(content)
 		deltas = append(deltas, Delta{Content: content})
 		t.sawOutput = true
+		t.streamedOutput = true
 	}
 	if items, ok := data["tool_calls"].([]any); ok && len(items) > 0 {
 		// 工具调用按 OpenAI 惯例分片增量下发：首帧带 name/id、后续帧只带
@@ -580,6 +623,7 @@ func (t *IDETranslator) processOutput(data map[string]any) []Delta {
 		if fragments := t.accumulateToolCalls(items); len(fragments) > 0 {
 			deltas = append(deltas, Delta{ToolCalls: fragments})
 			t.sawOutput = true
+			t.forwardedTool = true
 		}
 	}
 	return deltas
@@ -638,6 +682,16 @@ func (t *IDETranslator) accumulateToolCalls(items []any) []ToolCall {
 			continue
 		}
 		acc.args.WriteString(frag)
+		if t.ToolsRequiringArgs != nil && acc.wrapHoldState != ideWrapStreaming && acc.args.String() == "{}" && t.ToolsRequiringArgs[acc.name] {
+			// 完整首帧参数恰为 "{}" 且目标工具有必填参数：退化形状，
+			// 扣住不下发（重试轮 ToolsRequiringArgs 为 nil 不会进这里）。
+			acc.degenHold = true
+			continue
+		}
+		if acc.degenHold {
+			// 后续又来了片段（正常 {} 调用不会）：放弃扣留按原样直通。
+			acc.degenHold = false
+		}
 		if acc.wrapHoldState == ideWrapUndecided {
 			acc.probe = append(acc.probe, frag...)
 			effective := bytes.TrimLeft(acc.probe, " \t\r\n")
@@ -769,11 +823,30 @@ func (t *IDETranslator) Finalize(streamEndedWithoutDone bool) (*TurnResult, []De
 		Err:           t.upstreamErr,
 		ToolCalls:     t.toolCalls,
 	}
+	// 作废判定落档（流式路径由运行时在 Finalize 前调用 ShouldAbortTurn
+	// 提前返回；此处赋值供非流式/日志使用）。
+	t.result.DegenerateToolCalls = t.ShouldAbortTurn()
+
 	// 包装形状被扣住的调用：拆包（assembleToolCalls 已改写 acc.args）后
 	// 一次性补发完整参数；未能拆包的原样补发，保证不丢字节。
+	// 退化扣留（degenHold）的调用仅在不作废（客户端已见过本回合内容）时
+	// 补发，保持行为完整。
 	var tail []Delta
+	aborting := t.result.DegenerateToolCalls
 	for _, acc := range t.toolAccSeq {
-		if acc.name == "" || !acc.owesBytes {
+		if acc.name == "" {
+			continue
+		}
+		if acc.degenHold && !acc.owesBytes {
+			if !aborting {
+				slot := acc.slot
+				tail = append(tail, Delta{ToolCalls: []ToolCall{{
+					ID: acc.id, Name: acc.name, Index: &slot, Arguments: acc.args.String(),
+				}}})
+			}
+			continue
+		}
+		if !acc.owesBytes {
 			continue
 		}
 		slot := acc.slot

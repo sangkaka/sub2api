@@ -240,26 +240,70 @@ func (s *OpenAIGatewayService) forwardTraeIDETurn(
 		ParallelToolCalls: chatReq.ParallelToolCalls,
 		ReasoningEffort:   traeIDEReasoningEffort(account, originalModel, upstreamModel, chatReq.ReasoningEffort),
 	}
+	// 空参退化守卫：目标工具有必填参数时，首帧完整 "{}" 参数的回合整体
+	// 作废（客户端未收到任何字节），带矫正提示在同入口重打一次。
+	guardTools := traeToolsRequiringArgs(chatReq.Tools)
 	var lastErr error
 	for _, host := range s.traeIDEHostCandidates(client, account, upstreamModel) {
 		at := client.WithCloudIDEHost(host)
-		eventsFn := func() (<-chan trae.Event, <-chan error) {
-			return at.IDEChat(ctx, token, ideReq)
+		messages := ideReq.Messages
+		for attempt := 0; attempt < 2; attempt++ {
+			ideReq.Messages = messages
+			translator := trae.NewDegenerateGuardIDETranslator(originalModel, guardTools)
+			if attempt > 0 {
+				// 重试轮不过滤：结果原样交付，避免无限循环。
+				translator = trae.NewIDETranslator(originalModel)
+				ideReq.Messages = append(append([]trae.ChatMessage(nil), messages...), traeDegenerateNudgeMessage())
+			}
+			eventsFn := func() (<-chan trae.Event, <-chan error) {
+				return at.IDEChat(ctx, token, ideReq)
+			}
+			result, err := s.runTraeTurn(ctx, c, account, eventsFn, translator, chatReq, originalModel, billingModel, upstreamModel, "", traeIDEUpstreamEndpoint, startTime)
+			if err == nil {
+				s.traeMarkIDEHost(account.ID, upstreamModel, host)
+				return result, nil
+			}
+			if isTraeDegenerateTurnError(err) && attempt == 0 {
+				continue // 同入口带提示重打一次
+			}
+			lastErr = err
+			if !isTraeRemoteFallbackError(err) {
+				// 非入口级错误（限流/认证/传输）换域名无意义，原样上抛。
+				return result, err
+			}
+			break // 模型在该入口不可服务（首事件即拒，未写字节）：试下一入口。
 		}
-		result, err := s.runTraeTurn(ctx, c, account, eventsFn, trae.NewIDETranslator(originalModel), chatReq, originalModel, billingModel, upstreamModel, "", traeIDEUpstreamEndpoint, startTime)
-		if err == nil {
-			s.traeMarkIDEHost(account.ID, upstreamModel, host)
-			return result, nil
-		}
-		lastErr = err
-		if !isTraeRemoteFallbackError(err) {
-			// 非入口级错误（限流/认证/传输）换域名无意义，原样上抛。
-			return result, err
-		}
-		// 模型在该入口不可服务（首事件即拒，未写字节）：试下一入口。
 	}
 	// 双入口都不服务该模型：保留哨兵错误，由上层回落 Remote。
 	return nil, lastErr
+}
+
+// traeDegenerateNudgeMessage 是空参退化回合重试时追加的矫正提示。
+func traeDegenerateNudgeMessage() trae.ChatMessage {
+	text := "Reminder: tool call arguments must be a complete JSON object containing every required parameter for that tool. Empty arguments are invalid; call the tool again with full arguments."
+	raw, _ := json.Marshal(text)
+	return trae.ChatMessage{Role: "system", Content: raw}
+}
+
+// traeToolsRequiringArgs 返回「有必填参数」的工具名集合（无则 nil）。
+func traeToolsRequiringArgs(tools []apicompat.ChatTool) map[string]bool {
+	var requiring map[string]bool
+	for _, tool := range tools {
+		if tool.Function == nil || tool.Function.Name == "" || len(tool.Function.Parameters) == 0 {
+			continue
+		}
+		var schema struct {
+			Required []string `json:"required"`
+		}
+		if err := json.Unmarshal(tool.Function.Parameters, &schema); err != nil || len(schema.Required) == 0 {
+			continue
+		}
+		if requiring == nil {
+			requiring = make(map[string]bool)
+		}
+		requiring[tool.Function.Name] = true
+	}
+	return requiring
 }
 
 // traeIDEHostCandidates 返回 llm_utils_chat 的入口尝试顺序：生效缓存
@@ -373,6 +417,17 @@ func (s *OpenAIGatewayService) traePrefersRemote(accountID int64, model string) 
 	defer traeRemotePreferred.mu.Unlock()
 	expiry, ok := traeRemotePreferred.expires[key]
 	return ok && time.Now().Before(expiry)
+}
+
+// traeDegenerateTurnError 表示回合因空参工具调用退化被作废（客户端未收
+// 到任何本回合字节），上层应带矫正提示重试一次。
+type traeDegenerateTurnError struct{}
+
+func (traeDegenerateTurnError) Error() string { return "trae: degenerate empty-args tool turn" }
+
+func isTraeDegenerateTurnError(err error) bool {
+	_, ok := err.(traeDegenerateTurnError)
+	return ok
 }
 
 // isTraeRemoteFallbackError 识别回合层返回的「IDE 不服务该模型」回落信号。
@@ -579,6 +634,10 @@ func (s *OpenAIGatewayService) finishTraeStream(
 	ensureHead func(),
 ) (*OpenAIForwardResult, error) {
 	ensureHead()
+	if guard, ok := translator.(interface{ ShouldAbortTurn() bool }); ok && guard.ShouldAbortTurn() && !clientDisconnected {
+		// 空参退化回合：客户端未收到任何本回合内容，整体作废重打。
+		return nil, traeDegenerateTurnError{}
+	}
 	result, tail := translator.Finalize(!doneSeen)
 	for _, delta := range tail {
 		chatDelta := apicompat.ChatDelta{}

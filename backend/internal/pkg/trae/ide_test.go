@@ -395,3 +395,58 @@ func TestIDETranslatorWrappedSingleFrameTailCarriesName(t *testing.T) {
 	require.Equal(t, "Bash", call.Name)
 	require.Equal(t, `{"command":"ls"}`, call.Arguments)
 }
+
+// 空参退化守卫：有必填参数的工具收到完整 "{}" 参数 → 扣住不下发、
+// ShouldAbortTurn 为真（上层可作废重打）；Finalize 不补发。
+func TestIDETranslatorDegenerateEmptyArgsAborted(t *testing.T) {
+	tr := NewDegenerateGuardIDETranslator("m", map[string]bool{"Bash": true})
+	deltas := tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"index": 0, "id": "call_d",
+			"function_call": map[string]any{"name": "Bash", "arguments": "{}"},
+		}},
+	}})
+	require.Empty(t, deltas, "退化帧不得下发")
+	require.True(t, tr.ShouldAbortTurn())
+	result, tail := tr.Finalize(false)
+	require.True(t, result.DegenerateToolCalls)
+	require.Empty(t, tail)
+	require.Len(t, result.ToolCalls, 1)
+	require.Equal(t, "Bash", result.ToolCalls[0].Name)
+}
+
+// 已流出 thinking 的回合不作废：扣住的 {} 调用在收尾补发（内容完整交付）。
+func TestIDETranslatorDegenerateFlushedWhenStreamed(t *testing.T) {
+	tr := NewDegenerateGuardIDETranslator("m", map[string]bool{"Bash": true})
+	tr.ProcessEvent(Event{Name: "output", Data: map[string]any{"reasoning_content": "thinking..."}})
+	tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"index": 0, "id": "call_d",
+			"function_call": map[string]any{"name": "Bash", "arguments": "{}"},
+		}},
+	}})
+	require.False(t, tr.ShouldAbortTurn())
+	result, tail := tr.Finalize(false)
+	require.False(t, result.DegenerateToolCalls)
+	require.Len(t, tail, 1)
+	call := tail[0].ToolCalls[0]
+	require.Equal(t, "Bash", call.Name)
+	require.Equal(t, "{}", call.Arguments)
+	_ = result
+}
+
+// 守卫外（无必填参数的工具 / guard 关闭）：{} 照常透传。
+func TestIDETranslatorEmptyArgsPassWithoutGuard(t *testing.T) {
+	for _, guard := range []map[string]bool{nil, {"Write": true}} {
+		tr := NewDegenerateGuardIDETranslator("m", guard)
+		deltas := tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+			"tool_calls": []any{map[string]any{
+				"index": 0, "id": "call_p",
+				"function_call": map[string]any{"name": "NoParams", "arguments": "{}"},
+			}},
+		}})
+		require.Len(t, deltas, 1)
+		require.Equal(t, "{}", deltas[0].ToolCalls[0].Arguments)
+		require.False(t, tr.ShouldAbortTurn())
+	}
+}

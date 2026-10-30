@@ -751,3 +751,67 @@ func TestForwardTraeChatCompletionsIDEReasoningEffortOverride(t *testing.T) {
 	require.Equal(t, 1, ideHits)
 	require.Equal(t, "high", gotEffort)
 }
+
+// 空参退化回合作废重试：首轮回合全 "{}" 参数（无 thinking/文本）→ 作废；
+// 重试请求带矫正提示且结果直通交付。客户端只看到一个连续流。
+func TestForwardTraeChatCompletionsDegenerateRetry(t *testing.T) {
+	var hits int
+	var lastBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		_ = json.NewDecoder(r.Body).Decode(&lastBody)
+		w.Header().Set("Content-Type", "text/event-stream")
+		var toolCall string
+		if hits == 1 {
+			toolCall = `{"function_call":{"arguments":"{}","name":"Bash","namespace":null,"partial_arguments":null},"id":"call_d1","index":0,"type":"function"}`
+		} else {
+			toolCall = `{"function_call":{"arguments":"{\"command\":\"ls\"}","name":"Bash","namespace":null,"partial_arguments":null},"id":"call_d2","index":0,"type":"function"}`
+		}
+		fmt.Fprint(w, strings.Join([]string{
+			"event: token_usage\n" + `data: {"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}` + "\n\n",
+			`event: output` + "\n" + `data: {"response":null,"reasoning_content":null,"tool_calls":[` + toolCall + `]}` + "\n\n",
+			`event: done` + "\n" + `data: {"finish_reason":"tool_calls"}` + "\n\n",
+		}, ""))
+	})
+	upstream := httptest.NewServer(mux)
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL, ModelGatewayHost: upstream.URL}
+	isolateTraeChannelPrefs(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"model":    "GLM-5.3",
+		"stream":   true,
+		"tools":    []map[string]any{{"type": "function", "function": map[string]any{"name": "Bash", "parameters": map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}}, "required": []string{"command"}}}}},
+		"messages": []map[string]any{{"role": "user", "content": "run ls"}},
+	})
+	c, rec := traeTestContext()
+	result, err := svc.forwardTraeChatCompletions(context.Background(), c, newTraeTestAccount(), body, "GLM-5.3")
+	require.NoError(t, err)
+	require.Equal(t, traeIDEUpstreamEndpoint, result.UpstreamEndpoint)
+	require.Equal(t, 2, hits, "首轮回合作废后应重打一次")
+
+	// 重试请求带矫正提示 system 消息。
+	msgs, _ := lastBody["messages"].([]any)
+	require.NotEmpty(t, msgs)
+	nudged := false
+	for _, m := range msgs {
+		if mm, ok := m.(map[string]any); ok && mm["role"] == "system" {
+			if c, ok := mm["content"].(string); ok && strings.Contains(c, "required parameter") {
+				nudged = true
+			} else if arr, ok := mm["content"].([]any); ok && len(arr) > 0 {
+				if blk, ok := arr[0].(map[string]any); ok {
+					if txt, _ := blk["text"].(string); strings.Contains(txt, "required parameter") {
+						nudged = true
+					}
+				}
+			}
+		}
+	}
+	require.True(t, nudged, "重试请求必须带矫正提示")
+
+	// 客户端收到的是第二轮的完整参数（第一轮零字节）。
+	require.Contains(t, rec.Body.String(), `"command\":\"ls\"`)
+}
