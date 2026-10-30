@@ -204,6 +204,110 @@ func TestForwardAnthropicViaTraeToolHistoryWire(t *testing.T) {
 	}
 }
 
+// CC 生产事故回归（"Invalid tool parameters" 循环）：大参数工具调用被上游
+// 按 index 分片增量下发，流式出口必须拼出完整 tool_use input，而非空/半截
+// JSON（旧实现丢无 name 的片段，客户端参数校验必败）。
+func TestForwardAnthropicViaTraeStreamFragmentedTools(t *testing.T) {
+	var ideBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"list":[{"function":"solo_agent_remote","models":[
+			{"config_name":"GLM-5.3","provider":"zhipu","config_source":1,"is_preset":true}
+		]}]}}`)
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"chat_session_id":"s-1","message_id":"m-1"}}`)
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: error\ndata: {\"code\":1005}\n\n")
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/stop", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&ideBody))
+		w.Header().Set("Content-Type", "text/event-stream")
+		frames := []string{
+			`{"response":"writing","reasoning_content":null,"tool_calls":null}`,
+			`{"response":"","reasoning_content":null,"tool_calls":[{"index":0,"id":"c1","type":"function","function_call":{"name":"write_file","arguments":""}}]}`,
+			`{"response":"","reasoning_content":null,"tool_calls":[{"index":0,"function_call":{"arguments":"{\"path\":\"a"}}]}`,
+			`{"response":"","reasoning_content":null,"tool_calls":[{"index":0,"function_call":{"arguments":".txt\",\"content\":\"hel"}}]}`,
+			`{"response":"","reasoning_content":null,"tool_calls":[{"index":0,"function_call":{"arguments":"lo world\"}"}}]}`,
+		}
+		var sse strings.Builder
+		for _, frame := range frames {
+			fmt.Fprintf(&sse, "event: output\ndata: %s\n\n", frame)
+		}
+		sse.WriteString(`event: token_usage` + "\n" + `data: {"prompt_tokens":9,"completion_tokens":8,"total_tokens":17}` + "\n\n")
+		sse.WriteString(`event: done` + "\n" + `data: {"finish_reason":"stop"}` + "\n\n")
+		fmt.Fprint(w, sse.String())
+	})
+	upstream := startTestServer(t, mux)
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+	svc.traeClient = &trae.Client{
+		RemoteBase:   upstream.URL + "/api/remote/v1",
+		CloudIDEHost: upstream.URL,
+	}
+	traeIDEPreferred.mu.Lock()
+	savedPrefs := traeIDEPreferred.expires
+	traeIDEPreferred.expires = map[string]time.Time{}
+	traeIDEPreferred.mu.Unlock()
+	t.Cleanup(func() {
+		traeIDEPreferred.mu.Lock()
+		traeIDEPreferred.expires = savedPrefs
+		traeIDEPreferred.mu.Unlock()
+	})
+
+	body := map[string]any{
+		"model": "GLM-5.3", "max_tokens": 500, "stream": true,
+		"tools": []map[string]any{{
+			"name": "write_file", "description": "write",
+			"input_schema": map[string]any{"type": "object", "properties": map[string]any{
+				"path": map[string]any{"type": "string"}, "content": map[string]any{"type": "string"},
+			}},
+		}},
+		"messages": []map[string]any{{"role": "user", "content": "写 a.txt"}},
+	}
+	encoded, _ := json.Marshal(body)
+	c, rec := traeTestContext()
+	_, err := svc.forwardAnthropicViaTrae(context.Background(), c, newTraeTestAccount(), encoded, "GLM-5.3")
+	require.NoError(t, err)
+
+	// 解析 Anthropic SSE：tool_use 块名 + 拼接后的 input JSON。
+	out := rec.Body.String()
+	var toolName, inputJSON string
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var evt struct {
+			Type  string `json:"type"`
+			ContentBlock *struct {
+				Type  string `json:"type"`
+				Name  string `json:"name"`
+				ID    string `json:"id"`
+			} `json:"content_block"`
+			Delta *struct {
+				Type        string `json:"type"`
+				PartialJSON string `json:"partial_json"`
+			} `json:"delta"`
+		}
+		if json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &evt) != nil {
+			continue
+		}
+		if evt.Type == "content_block_start" && evt.ContentBlock != nil && evt.ContentBlock.Type == "tool_use" {
+			toolName = evt.ContentBlock.Name
+		}
+		if evt.Type == "content_block_delta" && evt.Delta != nil && evt.Delta.Type == "input_json_delta" {
+			inputJSON += evt.Delta.PartialJSON
+		}
+	}
+	require.Equal(t, "write_file", toolName, "必须出现工具块宣告")
+	require.NotEmpty(t, inputJSON, "必须下发工具参数")
+	require.JSONEq(t, `{"path":"a.txt","content":"hello world"}`, inputJSON, "分片参数必须拼成完整 JSON")
+	require.Contains(t, out, `"stop_reason":"tool_use"`)
+}
+
 func setupToolHistoryUpstream(t *testing.T, ideBody *map[string]any) *http.ServeMux {
 	t.Helper()
 	mux := http.NewServeMux()
