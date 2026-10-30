@@ -25,8 +25,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -451,6 +453,10 @@ type IDETranslator struct {
 	toolAccByID map[string]*ideToolAccumulator
 	toolAccSeq  []*ideToolAccumulator
 	callSeq     int
+	// 形状指纹与丢弃样本的观测上限：分片形状随上游漂移时日志可直接
+	// 定位，而不是只剩客户端症状。
+	shapeLogged int
+	dropLogged  int
 	usage       *Usage
 	finish      string
 	provider    string
@@ -543,12 +549,30 @@ func (t *IDETranslator) processOutput(data map[string]any) []Delta {
 		// index+arguments 片段。片段边收边以稳定槽位透传（客户端实时看到
 		// tool_use 增量，长回合不会静默到收尾）；完整调用在 Finalize 组装
 		// 进 TurnResult（非流式路径与 finish_reason 用）。
+		if toolShapeDebug && t.shapeLogged < 3 {
+			t.shapeLogged++
+			raw, _ := json.Marshal(items)
+			slog.Warn("trae ide tool_calls shape sample", "model", t.model, "raw", truncate(string(raw), 400))
+		}
 		if fragments := t.accumulateToolCalls(items); len(fragments) > 0 {
 			deltas = append(deltas, Delta{ToolCalls: fragments})
 			t.sawOutput = true
 		}
 	}
 	return deltas
+}
+
+// toolShapeDebug 开启后每回合采样前几帧 tool_calls 原文（抓上游形状漂移用）。
+var toolShapeDebug = os.Getenv("TRAE_TOOL_SHAPE_DEBUG") == "1"
+
+// logDroppedToolEntry 记录被丢弃的工具分片原文（每回合限次，防刷屏）。
+func (t *IDETranslator) logDroppedToolEntry(entry map[string]any, reason string) {
+	if t.dropLogged >= 8 {
+		return
+	}
+	t.dropLogged++
+	raw, _ := json.Marshal(entry)
+	slog.Warn("trae ide tool fragment dropped", "model", t.model, "reason", reason, "entry", truncate(string(raw), 300))
 }
 
 func (t *IDETranslator) accumulateToolCalls(items []any) []ToolCall {
@@ -563,6 +587,7 @@ func (t *IDETranslator) accumulateToolCalls(items []any) []ToolCall {
 			fn, _ = entry["function_call"].(map[string]any)
 		}
 		if fn == nil {
+			t.logDroppedToolEntry(entry, "no function/function_call key")
 			continue
 		}
 		id, _ := entry["id"].(string)
@@ -573,6 +598,7 @@ func (t *IDETranslator) accumulateToolCalls(items []any) []ToolCall {
 		}
 		acc := t.resolveToolAccumulator(entry, id, name)
 		if acc == nil {
+			t.logDroppedToolEntry(entry, "unattributable: no index/id/name")
 			continue
 		}
 		if id != "" && acc.id == "" {
