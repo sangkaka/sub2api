@@ -18,8 +18,27 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
+
+// anthropicBodyHasImageBlocks 报告 Anthropic Messages 请求里是否携带 image
+// 内容块（content 为块数组且任一块 type=image）。system 与字符串 content
+// 不含图，无需扫描。
+func anthropicBodyHasImageBlocks(body []byte) bool {
+	for _, msg := range gjson.GetBytes(body, "messages").Array() {
+		content := msg.Get("content")
+		if !content.IsArray() {
+			continue
+		}
+		for _, block := range content.Array() {
+			if block.Get("type").String() == "image" {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // forwardAnthropicViaTrae 是 ForwardAsAnthropic 的 trae 平台分支。
 func (s *OpenAIGatewayService) forwardAnthropicViaTrae(
@@ -38,6 +57,16 @@ func (s *OpenAIGatewayService) forwardAnthropicViaTrae(
 	if strings.TrimSpace(originalModel) == "" {
 		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return nil, fmt.Errorf("missing model in request")
+	}
+	// 图片拒绝必须先于 interposer 包 writer：runtime 层写出的 OpenAI 形错误体
+	// 会被拦截 writer 吞掉（见下方错误路径注释），只有这里的 Anthropic 形 400
+	// 能原样到达 /v1/messages 客户端。runtime 层的同类拒绝保留，作
+	// /v1/chat/completions 入口的防线。
+	if anthropicBodyHasImageBlocks(body) && !isTraeCredentialTrue(account, "allow_remote_images") {
+		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error",
+			"image inputs are not supported on the trAE upstream for model "+originalModel+
+				": the upstream session does not deliver image attachments to the model; remove image blocks or use a vision-capable model")
+		return nil, fmt.Errorf("trAE upstream does not support image inputs (model %s)", originalModel)
 	}
 	applyOpenAICompatModelNormalization(&anthropicReq)
 	clientStream := anthropicReq.Stream

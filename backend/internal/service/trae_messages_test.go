@@ -379,3 +379,36 @@ func startTestServer(t *testing.T, mux *http.ServeMux) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(mux)
 }
+
+// 图片拒绝（/v1/messages 入站，2026-10-30）：Anthropic 形 400 必须在
+// interposer 包 writer 之前写出；运营开关 allow_remote_images 打开时不拒。
+func TestForwardAnthropicViaTraeImageRejected(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"list":[{"function":"solo_agent_remote","models":[
+			{"config_name":"GLM-5.3","provider":"zhipu","config_source":1,"is_preset":true}
+		]}]}}`)
+	})
+	upstream := httptest.NewServer(mux)
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL, ModelGatewayHost: upstream.URL}
+	isolateTraeChannelPrefs(t)
+
+	imgBody := `{"model":"GLM-5.3","max_tokens":32,"stream":false,"messages":[{"role":"user","content":[
+		{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBOR"}},
+		{"type":"text","text":"什么颜色"}]}]}`
+
+	c, rec := traeTestContext()
+	_, err := svc.forwardAnthropicViaTrae(context.Background(), c, newTraeTestAccount(), []byte(imgBody), "GLM-5.3")
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "image inputs are not supported")
+	require.Contains(t, rec.Body.String(), `"type":"error"`)
+
+	acct := newTraeTestAccount()
+	acct.Credentials["allow_remote_images"] = true
+	c2, rec2 := traeTestContext()
+	_, _ = svc.forwardAnthropicViaTrae(context.Background(), c2, acct, []byte(imgBody), "GLM-5.3")
+	require.NotContains(t, rec2.Body.String(), "image inputs are not supported", "开关打开时不在此层拒绝")
+}
