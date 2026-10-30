@@ -69,6 +69,9 @@ type IDEChatRequest struct {
 	Tools             []ToolDefinition
 	ToolChoice        any
 	ParallelToolCalls *bool
+	// ReasoningEffort 非空时下发 reasoning_effort（如 glm 无思考回合
+	// 工具调用退化为 arguments:"{}" 时按模型强制 high）。
+	ReasoningEffort string
 }
 
 type ideWireMessage struct {
@@ -150,6 +153,9 @@ func buildIDEChatBody(req IDEChatRequest) ([]byte, error) {
 	}
 	if req.MaxTokens > 0 {
 		body["max_tokens"] = req.MaxTokens
+	}
+	if req.ReasoningEffort != "" {
+		body["reasoning_effort"] = req.ReasoningEffort
 	}
 	if len(req.Tools) > 0 {
 		// 上游 FunctionDefinition 要求 parameters 为 JSON 字符串（SOLO 编码，

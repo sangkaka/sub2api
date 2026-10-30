@@ -711,3 +711,43 @@ func TestForwardTraeChatCompletionsForcedRemoteModels(t *testing.T) {
 	require.Equal(t, traeUpstreamEndpoint, result.UpstreamEndpoint)
 	require.Contains(t, rec.Body.String(), "hello world")
 }
+
+// ide_reasoning_effort_map 命中：IDE 请求体携带 reasoning_effort=high，
+// 且该模型仍走 IDE 快路径（不因名单外配置误伤通道选择）。
+func TestForwardTraeChatCompletionsIDEReasoningEffortOverride(t *testing.T) {
+	var gotEffort any
+	var ideHits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		ideHits++
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotEffort = body["reasoning_effort"]
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, strings.Join([]string{
+			`event: output` + "\n" + `data: {"response":"ok","reasoning_content":null,"tool_calls":null}` + "\n\n",
+			`event: token_usage` + "\n" + `data: {"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}` + "\n\n",
+			`event: done` + "\n" + `data: {"finish_reason":"stop"}` + "\n\n",
+		}, ""))
+	})
+	upstream := httptest.NewServer(mux)
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL, ModelGatewayHost: upstream.URL}
+	isolateTraeChannelPrefs(t)
+
+	account := newTraeTestAccount()
+	account.Credentials["ide_reasoning_effort_map"] = `{"GLM-5.3":"high"}`
+
+	body, _ := json.Marshal(map[string]any{
+		"model":    "GLM-5.3",
+		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+	})
+	c, _ := traeTestContext()
+	result, err := svc.forwardTraeChatCompletions(context.Background(), c, account, body, "GLM-5.3")
+	require.NoError(t, err)
+	require.Equal(t, traeIDEUpstreamEndpoint, result.UpstreamEndpoint)
+	require.Equal(t, 1, ideHits)
+	require.Equal(t, "high", gotEffort)
+}

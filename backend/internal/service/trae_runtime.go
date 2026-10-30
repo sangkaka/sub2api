@@ -238,6 +238,7 @@ func (s *OpenAIGatewayService) forwardTraeIDETurn(
 		Tools:             toTraeToolDefinitions(chatReq.Tools),
 		ToolChoice:        trae.NormalizeIDEToolChoice(chatReq.ToolChoice),
 		ParallelToolCalls: chatReq.ParallelToolCalls,
+		ReasoningEffort:   traeIDEReasoningEffort(account, originalModel, upstreamModel, chatReq.ReasoningEffort),
 	}
 	var lastErr error
 	for _, host := range s.traeIDEHostCandidates(client, account, upstreamModel) {
@@ -942,6 +943,25 @@ func escapeJSONString(value string) string {
 		return value
 	}
 	return string(payload[1 : len(payload)-1])
+}
+
+// traeIDEReasoningEffort 解析账号级 ide_reasoning_effort_map（JSON 对象
+// 模型名→effort，键不区分大小写，同时匹配对外模型名与上游 config 名）：
+// 命中则覆盖客户端 effort。用于上游模型在无思考回合工具调用退化时按模型
+// 强制思考（如 glm-5.3-flashx → high），运营改凭据即可，无需发版。
+func traeIDEReasoningEffort(account *Account, originalModel, upstreamModel, clientEffort string) string {
+	raw, _ := account.Credentials["ide_reasoning_effort_map"].(string)
+	if trimmed := strings.TrimSpace(raw); trimmed != "" {
+		var mapping map[string]string
+		if err := json.Unmarshal([]byte(trimmed), &mapping); err == nil {
+			for key, effort := range mapping {
+				if strings.EqualFold(key, originalModel) || strings.EqualFold(key, upstreamModel) {
+					return effort
+				}
+			}
+		}
+	}
+	return trae.NormalizeReasoningEffort(clientEffort)
 }
 
 // isTraeForcedRemote 判定账号级模型名单 force_remote_models（逗号分隔，
