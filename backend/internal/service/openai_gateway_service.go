@@ -474,6 +474,7 @@ type OpenAIGatewayService struct {
 	traeOAuthService      *TraeOAuthService
 	traeClient            *traepkg.Client
 	traeCatalog           *traeRuntimeCatalog
+	traeV2Bindings        *traeV2BindingCache
 	toolCorrector         *CodexToolCorrector
 	openaiWSResolver      OpenAIWSProtocolResolver
 	resolver              *ModelPricingResolver

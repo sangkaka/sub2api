@@ -815,3 +815,66 @@ func TestForwardTraeChatCompletionsDegenerateRetry(t *testing.T) {
 	// 客户端收到的是第二轮的完整参数（第一轮零字节）。
 	require.Contains(t, rec.Body.String(), `"command\":\"ls\"`)
 }
+
+// ide_v2_models 名单命中：走 llm_raw_chat v2（目录绑定 __dev id + 字符串化
+// 参数），工具调用完整交付；目录未命中回落旧端点。
+func TestForwardTraeChatCompletionsV2Routing(t *testing.T) {
+	var v2Hits, legacyHits int
+	var v2Body map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/api/ide/v1/get_detail_param", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"config_info_list":[
+			{"config_name":"glm-5.2","config_source":1,"model_detail_list":[{"model_name":"glm-5.2__dev"}]}
+		]}`)
+	})
+	mux.HandleFunc("/api/ide/v2/llm_raw_chat", func(w http.ResponseWriter, r *http.Request) {
+		v2Hits++
+		_ = json.NewDecoder(r.Body).Decode(&v2Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, strings.Join([]string{
+			`event: output` + "\n" + `data: {"response":null,"reasoning_content":null,"tool_calls":[{"function_call":{"arguments":"{\"command\":\"ls\"}","name":"Bash","namespace":null,"partial_arguments":null},"id":"call_v2","index":0,"type":"function"}]}` + "\n\n",
+			`event: token_usage` + "\n" + `data: {"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}` + "\n\n",
+			`event: done` + "\n" + `data: {"finish_reason":"tool_calls"}` + "\n\n",
+		}, ""))
+	})
+	mux.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		legacyHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `event: output`+"\n"+`data: {"response":"legacy","reasoning_content":null,"tool_calls":null}`+"\n\n"+`event: done`+"\n"+`data: {"finish_reason":"stop"}`+"\n\n")
+	})
+	upstream := httptest.NewServer(mux)
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL, ModelGatewayHost: upstream.URL}
+	isolateTraeChannelPrefs(t)
+
+	account := newTraeTestAccount()
+	account.Credentials["ide_v2_models"] = " GLM-5.2-Trae "
+
+	body, _ := json.Marshal(map[string]any{
+		"model":    "GLM-5.2-Trae",
+		"stream":   true,
+		"tools":    []map[string]any{{"type": "function", "function": map[string]any{"name": "Bash", "parameters": map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}}, "required": []string{"command"}}}}},
+		"messages": []map[string]any{{"role": "user", "content": "run ls"}},
+	})
+	c, rec := traeTestContext()
+	result, err := svc.forwardTraeChatCompletions(context.Background(), c, account, body, "GLM-5.2-Trae")
+	require.NoError(t, err)
+	require.Equal(t, traeIDEV2UpstreamEndpoint, result.UpstreamEndpoint)
+	require.Equal(t, 1, v2Hits)
+	require.Equal(t, 0, legacyHits, "名单模型不得走旧端点")
+	require.Equal(t, "glm-5.2", v2Body["config_name"])
+	require.Equal(t, "glm-5.2__dev", v2Body["model_name"], "必须用目录 __dev provider id")
+	require.Contains(t, rec.Body.String(), `"command\":\"ls\"`)
+
+	// 未命中名单的模型照走旧端点（目录里有 glm-5.2 但名单不匹配）。
+	c2, _ := traeTestContext()
+	body2, _ := json.Marshal(map[string]any{
+		"model":    "GLM-5.3",
+		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+	})
+	_, err = svc.forwardTraeChatCompletions(context.Background(), c2, newTraeTestAccount(), body2, "GLM-5.3")
+	require.NoError(t, err)
+	require.Equal(t, 1, legacyHits, "名单外模型走旧端点")
+}

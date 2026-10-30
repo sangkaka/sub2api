@@ -24,7 +24,8 @@ const (
 	traeUpstreamEndpoint = "/chat_sessions"
 	// traeIDEUpstreamEndpoint 是 IDE/TraeWork 兼容会话端点（企业版账号的
 	// 实际执行链，kimi-k3.1-pro 等 Remote 拒绝模型的回落路径）。
-	traeIDEUpstreamEndpoint = "/api/agent/v3/llm_utils_chat"
+	traeIDEUpstreamEndpoint   = "/api/agent/v3/llm_utils_chat"
+	traeIDEV2UpstreamEndpoint = "/api/ide/v2/llm_raw_chat"
 	// traeStreamHeadKey 标记本请求的 trae SSE 头（+role 帧）已写：Remote
 	// 回合内回落 IDE 时续写同一响应流而不重复写头。
 	traeStreamHeadKey = "trae_sse_head_written"
@@ -243,10 +244,23 @@ func (s *OpenAIGatewayService) forwardTraeIDETurn(
 	// 空参退化守卫：目标工具有必填参数时，首帧完整 "{}" 参数的回合整体
 	// 作废（客户端未收到任何字节），带矫正提示在同入口重打一次。
 	guardTools := traeToolsRequiringArgs(chatReq.Tools)
+	// 名单模型走 v2 新栈（llm_raw_chat + chat_v3 目录绑定）；目录未命中或
+	// 拉取失败回落旧端点，行为不变。
+	var v2Binding trae.V2ModelBinding
+	if isTraeV2Model(account, originalModel, upstreamModel) {
+		if binding, ok := s.traeV2BindingFor(ctx, client, account, token, account.GetCredential("user_id"), upstreamModel); ok {
+			v2Binding = binding
+			SetActualOpenAIUpstreamEndpoint(c, traeIDEV2UpstreamEndpoint)
+		}
+	}
 	var lastErr error
 	for _, host := range s.traeIDEHostCandidates(client, account, upstreamModel) {
 		at := client.WithCloudIDEHost(host)
 		messages := ideReq.Messages
+		turnEndpoint := traeIDEUpstreamEndpoint
+		if v2Binding.ModelName != "" {
+			turnEndpoint = traeIDEV2UpstreamEndpoint
+		}
 		for attempt := 0; attempt < 2; attempt++ {
 			ideReq.Messages = messages
 			translator := trae.NewDegenerateGuardIDETranslator(originalModel, guardTools)
@@ -258,7 +272,25 @@ func (s *OpenAIGatewayService) forwardTraeIDETurn(
 			eventsFn := func() (<-chan trae.Event, <-chan error) {
 				return at.IDEChat(ctx, token, ideReq)
 			}
-			result, err := s.runTraeTurn(ctx, c, account, eventsFn, translator, chatReq, originalModel, billingModel, upstreamModel, "", traeIDEUpstreamEndpoint, startTime)
+			if v2Binding.ModelName != "" {
+				v2Messages := toTraeMessages(chatReq.Messages)
+				if attempt > 0 {
+					v2Messages = append(v2Messages, traeDegenerateNudgeMessage())
+				}
+				v2Req := trae.RawChatV2Request{
+					Messages:        v2Messages,
+					ConfigName:      v2Binding.ConfigName,
+					ModelName:       v2Binding.ModelName,
+					ConfigSource:    v2Binding.ConfigSource,
+					UserID:          account.GetCredential("user_id"),
+					Tools:           toTraeToolDefinitions(chatReq.Tools),
+					ReasoningEffort: traeIDEReasoningEffort(account, originalModel, upstreamModel, chatReq.ReasoningEffort),
+				}
+				eventsFn = func() (<-chan trae.Event, <-chan error) {
+					return at.RawChatV2(ctx, token, v2Req)
+				}
+			}
+			result, err := s.runTraeTurn(ctx, c, account, eventsFn, translator, chatReq, originalModel, billingModel, upstreamModel, "", turnEndpoint, startTime)
 			if err == nil {
 				s.traeMarkIDEHost(account.ID, upstreamModel, host)
 				return result, nil
@@ -1021,6 +1053,86 @@ func traeIDEReasoningEffort(account *Account, originalModel, upstreamModel, clie
 		}
 	}
 	return trae.NormalizeReasoningEffort(clientEffort)
+}
+
+// traeV2BindingCache 缓存账号级 chat_v3 目录绑定（config_name → __dev
+// provider id + config_source）。TTL 与 descriptor 目录一致。
+type traeV2BindingCache struct {
+	mu      sync.Mutex
+	entries map[int64]traeV2BindingEntry
+}
+
+type traeV2BindingEntry struct {
+	bindings map[string]trae.V2ModelBinding
+	expiry   time.Time
+}
+
+func (m *traeV2BindingCache) get(accountID int64) map[string]trae.V2ModelBinding {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, ok := m.entries[accountID]
+	if !ok || time.Now().After(entry.expiry) {
+		return nil
+	}
+	return entry.bindings
+}
+
+func (m *traeV2BindingCache) put(accountID int64, bindings map[string]trae.V2ModelBinding) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.entries == nil {
+		m.entries = map[int64]traeV2BindingEntry{}
+	}
+	m.entries[accountID] = traeV2BindingEntry{bindings: bindings, expiry: time.Now().Add(traeCatalogCacheTTL)}
+}
+
+// isTraeV2Model 判定账号级名单 ide_v2_models（csv，键不区分大小写）：命中
+// 的模型走 llm_raw_chat v2 通道（新栈原生函数调用，长参数可靠）。
+func isTraeV2Model(account *Account, originalModel, upstreamModel string) bool {
+	raw, _ := account.Credentials["ide_v2_models"].(string)
+	if strings.TrimSpace(raw) == "" {
+		return false
+	}
+	for _, name := range strings.Split(raw, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if strings.EqualFold(name, originalModel) || strings.EqualFold(name, upstreamModel) {
+			return true
+		}
+	}
+	return false
+}
+
+// traeV2BindingFor 解析模型在 chat_v3 目录的绑定：候选名依次尝试上游名与
+// 去 -trae 后缀名（目录 config_name 无该后缀）。
+func (s *OpenAIGatewayService) traeV2BindingFor(ctx context.Context, client *trae.Client, account *Account, token, userID, model string) (trae.V2ModelBinding, bool) {
+	if s.traeV2Bindings == nil {
+		s.traeV2Bindings = &traeV2BindingCache{}
+	}
+	bindings := s.traeV2Bindings.get(account.ID)
+	if bindings == nil {
+		fetched, err := client.FetchV2ModelBindings(ctx, token, userID)
+		if err != nil || len(fetched) == 0 {
+			return trae.V2ModelBinding{}, false
+		}
+		s.traeV2Bindings.put(account.ID, fetched)
+		bindings = fetched
+	}
+	candidates := []string{model}
+	if idx := strings.LastIndex(strings.ToLower(model), "-trae"); idx > 0 {
+		candidates = append(candidates, model[:idx])
+	}
+	for _, key := range candidates {
+		if key == "" {
+			continue
+		}
+		if binding, ok := bindings[strings.ToLower(key)]; ok {
+			return binding, true
+		}
+	}
+	return trae.V2ModelBinding{}, false
 }
 
 // isTraeForcedRemote 判定账号级模型名单 force_remote_models（逗号分隔，
