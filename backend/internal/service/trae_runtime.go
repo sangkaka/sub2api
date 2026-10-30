@@ -796,11 +796,11 @@ func (s *OpenAIGatewayService) bufferedTraeTurn(
 		}},
 	}
 	if result.Usage != nil {
-		payload["usage"] = gin.H{
-			"prompt_tokens":     result.Usage.PromptTokens,
-			"completion_tokens": result.Usage.CompletionTokens,
-			"total_tokens":      result.Usage.TotalTokens,
-		}
+		// 与流式路径同源（traeUsageToChatUsage）：保留 prompt_tokens_details
+		// 的 cached_tokens，否则非流式客户端与 /v1/messages 非流式桥接
+		// （chatUsageToAnthropicUsage 依赖该字段算 cache_read_input_tokens）
+		// 都看不到缓存命中。
+		payload["usage"] = traeUsageToChatUsage(result.Usage)
 	}
 	c.JSON(http.StatusOK, payload)
 	return &OpenAIForwardResult{

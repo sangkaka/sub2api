@@ -409,6 +409,52 @@ func TestForwardTraeChatCompletionsIDEFallback(t *testing.T) {
 	require.Contains(t, rec2.Body.String(), "hello ide")
 }
 
+// 非流式 usage 必须带缓存细分：IDE token_usage 的 TRAE 键族
+// cache_read_input_tokens（企业域名入口实测形状）经 traeUsageToChatUsage 进
+// payload。旧代码只写三个平铺字段，非流式客户端与 /v1/messages 非流式桥接
+// （chatUsageToAnthropicUsage 依赖 prompt_tokens_details 算 cache_read）都看不到命中。
+func TestForwardTraeChatCompletionsBufferedCacheUsage(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"list":[{"function":"solo_agent_remote","models":[
+			{"config_name":"GLM-5.3","provider":"zhipu","config_source":1,"is_preset":true}
+		]}]}}`)
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"chat_session_id":"s-1","message_id":"m-1"}}`)
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/events", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/stop", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, strings.Join([]string{
+			`event: output` + "\n" + `data: {"response":"cache me","reasoning_content":null,"tool_calls":null}` + "\n\n",
+			`event: token_usage` + "\n" + `data: {"name":"","prompt_tokens":4233,"completion_tokens":41,"total_tokens":4274,"cache_creation_input_tokens":0,"cache_read_input_tokens":4224,"reasoning_tokens":33,"prompt_tokens_total":0,"completion_tokens_total":0,"total_tokens_total":0,"cache_creation_input_tokens_total":0,"cache_read_input_tokens_total":0,"reasoning_tokens_total":0,"cluster":"normal_context"}` + "\n\n",
+			`event: done` + "\n" + `data: {"finish_reason":"stop"}` + "\n\n",
+		}, ""))
+	})
+	upstream := httptest.NewServer(mux)
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL, ModelGatewayHost: upstream.URL}
+	isolateTraeChannelPrefs(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"model":    "GLM-5.3",
+		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+	})
+	c, rec := traeTestContext()
+	result, err := svc.forwardTraeChatCompletions(context.Background(), c, newTraeTestAccount(), body, "GLM-5.3")
+	require.NoError(t, err)
+	require.Equal(t, traeIDEUpstreamEndpoint, result.UpstreamEndpoint)
+	// 计费侧（OpenAIUsage）保留命中量。
+	require.Equal(t, 4233, result.Usage.InputTokens)
+	require.Equal(t, 4224, result.Usage.CacheReadInputTokens)
+	// 客户端侧：平铺字段与缓存细分都要出现。
+	require.Contains(t, rec.Body.String(), `"prompt_tokens":4233`)
+	require.Contains(t, rec.Body.String(), `"prompt_tokens_details":{"cached_tokens":4224}`)
+}
+
 // 流式回落：Remote 心跳（头未写，被丢弃）→ 1005 → IDE 流式正常输出，
 // 客户端只看到一个连续 SSE 流。
 func TestForwardTraeChatCompletionsIDEFallbackStream(t *testing.T) {
