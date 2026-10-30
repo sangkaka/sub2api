@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -133,6 +134,17 @@ func TestForwardAnthropicViaTraeToolHistoryWire(t *testing.T) {
 		RemoteBase:   upstream.URL + "/api/remote/v1",
 		CloudIDEHost: upstream.URL,
 	}
+	// 走 1005→IDE 回落会写包级偏好缓存；隔离并恢复，避免污染同账号同模型
+	// 的其它测试（包级状态按测试串行共享）。
+	traeIDEPreferred.mu.Lock()
+	savedPrefs := traeIDEPreferred.expires
+	traeIDEPreferred.expires = map[string]time.Time{}
+	traeIDEPreferred.mu.Unlock()
+	t.Cleanup(func() {
+		traeIDEPreferred.mu.Lock()
+		traeIDEPreferred.expires = savedPrefs
+		traeIDEPreferred.mu.Unlock()
+	})
 
 	body := map[string]any{
 		"model": "GLM-5.3", "max_tokens": 500,
