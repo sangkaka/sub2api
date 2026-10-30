@@ -485,3 +485,12 @@ func TestEntitlementUsage(t *testing.T) {
 }
 
 var _ = time.Second
+
+// Remote 通道回落判定：1005 且未输出 → IDE 哨兵；其它错误码不回落。
+func TestStreamTranslatorFallbackError(t *testing.T) {
+	tr := NewStreamTranslator("m")
+	require.Nil(t, tr.FallbackError(Event{Name: "error", Data: map[string]any{"code": 1001, "message": "auth"}}))
+	ue := tr.FallbackError(Event{Name: "error", Data: map[string]any{"code": 1005, "message": ""}})
+	require.NotNil(t, ue)
+	require.Equal(t, IDEFallbackCode, ue.Code)
+}

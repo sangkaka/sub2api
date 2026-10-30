@@ -350,6 +350,23 @@ func (t *StreamTranslator) ProviderModel() string { return t.provider }
 // SawOutput 报告是否已观察到模型输出（错误映射的不可重放判定）。
 func (t *StreamTranslator) SawOutput() bool { return t.sawOutput }
 
+// FallbackError 判定 Remote 流中需要回落 IDE 端点的错误事件：业务码
+// 1005 且尚未观察到模型输出（kimi-k3.1-pro 实测固定复现）。
+func (t *StreamTranslator) FallbackError(ev Event) *UpstreamError {
+	if ev.Name != EventError || t.sawOutput {
+		return nil
+	}
+	code, _ := ExtractErrorDetails(ev.Data)
+	if code != IDEFallbackCode {
+		return nil
+	}
+	return &UpstreamError{
+		Kind:    ErrorKindUpstream,
+		Code:    IDEFallbackCode,
+		Message: "trae remote rejected this model (code 1005); retry via llm_utils_chat",
+	}
+}
+
 // ProcessEvent 消费一个事件，返回待下发增量（可能为空）。
 func (t *StreamTranslator) ProcessEvent(ev Event) []Delta {
 	switch ev.Name {

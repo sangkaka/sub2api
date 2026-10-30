@@ -47,6 +47,12 @@ const (
 	// 固定返回。上游不解释，按「该模型在此账号的 Remote 通道不可用」处理。
 	IDEFallbackCode = "1005"
 
+	// RemoteFallbackCode 是 IDE 端点需要回落 Remote 会话的哨兵码（本端
+	// 派生，非上游业务码）：IDE 首事件即拒 4001（参数无效=模型名不识别）
+	// / 4023（服务异常=模型不在 solo_work_lite 目录，DeepSeek 系实测），
+	// 说明该模型只能在 Remote 通道服务。
+	RemoteFallbackCode = "ide-model-unavailable"
+
 	// EventOutput 是 llm_utils_chat 的增量输出帧。
 	EventOutput = "output"
 )
@@ -472,6 +478,24 @@ func (t *IDETranslator) Started() bool         { return t.started }
 func (t *IDETranslator) SawOutput() bool       { return t.sawOutput }
 func (t *IDETranslator) Model() string         { return t.model }
 func (t *IDETranslator) ProviderModel() string { return t.provider }
+
+// FallbackError 判定 IDE 流中需要回落 Remote 会话的错误事件：模型不可
+// 服务（4001/4023）且尚未观察到输出。此类错误实测为首事件即拒（~0.4s），
+// 未向客户端写字节，上层可干净回落。
+func (t *IDETranslator) FallbackError(ev Event) *UpstreamError {
+	if ev.Name != EventError || t.sawOutput {
+		return nil
+	}
+	code, message := ExtractErrorDetails(ev.Data)
+	if code != "4001" && code != "4023" {
+		return nil
+	}
+	return &UpstreamError{
+		Kind:    ErrorKindUpstream,
+		Code:    RemoteFallbackCode,
+		Message: "trae ide rejected this model (code " + code + ": " + message + "); retry via remote session",
+	}
+}
 
 // ProcessEvent 消费一帧事件，返回应下发的增量。
 func (t *IDETranslator) ProcessEvent(ev Event) []Delta {

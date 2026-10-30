@@ -43,6 +43,12 @@ func newTraeTestUpstream(t *testing.T, events string) *httptest.Server {
 	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/stop", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	// IDE 端点默认返回「模型不可服务」：这些用例走 IDE 优先 → 自动回落
+	// Remote 的真实路径（IDE 可服务的场景由其它用例显式挂 IDE 处理器）。
+	mux.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: error\ndata: {\"code\":4023,\"message\":\"model not served on ide\"}\n\n")
+	})
 	return httptest.NewServer(mux)
 }
 
@@ -78,8 +84,33 @@ func newTraeTestGateway(t *testing.T, upstream *httptest.Server) *OpenAIGatewayS
 	gin.SetMode(gin.TestMode)
 	svc := &OpenAIGatewayService{}
 	provider := NewTraeTokenProvider(nil, nil, nil)
-	svc.SetTraeDeps(provider, nil, &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1"})
+	svc.SetTraeDeps(provider, nil, &trae.Client{
+		RemoteBase:   upstream.URL + "/api/remote/v1",
+		CloudIDEHost: upstream.URL,
+	})
 	return svc
+}
+
+// isolateTraeChannelPrefs 隔离通道偏好缓存（包级状态，测试串行共享），
+// 返回恢复函数。IDE 优先路由后两个方向的偏好都会影响通道选择。
+func isolateTraeChannelPrefs(t *testing.T) {
+	t.Helper()
+	traeIDEPreferred.mu.Lock()
+	savedIDE := traeIDEPreferred.expires
+	traeIDEPreferred.expires = map[string]time.Time{}
+	traeIDEPreferred.mu.Unlock()
+	traeRemotePreferred.mu.Lock()
+	savedRemote := traeRemotePreferred.expires
+	traeRemotePreferred.expires = map[string]time.Time{}
+	traeRemotePreferred.mu.Unlock()
+	t.Cleanup(func() {
+		traeIDEPreferred.mu.Lock()
+		traeIDEPreferred.expires = savedIDE
+		traeIDEPreferred.mu.Unlock()
+		traeRemotePreferred.mu.Lock()
+		traeRemotePreferred.expires = savedRemote
+		traeRemotePreferred.mu.Unlock()
+	})
 }
 
 func traeTestContext() (*gin.Context, *httptest.ResponseRecorder) {
@@ -306,7 +337,8 @@ func TestForwardTraeChatCompletionsToolBridge(t *testing.T) {
 
 // Remote 对某模型固定 1005（kimi-k3.1-pro 实测）：回合先在 Remote 收到
 // error 事件，未写任何客户端字节即回落 llm_utils_chat；偏好缓存让第二笔
-// 请求跳过 Remote 直连 IDE。
+// 请求跳过 Remote 直连 IDE。IDE 优先路由下该路径由「已确认 IDE 不服务」
+// 的模型（Remote 偏好命中）触达，用种子偏好模拟 DeepSeek 类模型。
 func TestForwardTraeChatCompletionsIDEFallback(t *testing.T) {
 	var ideHits, remoteEventHits int
 	mux := http.NewServeMux()
@@ -340,16 +372,10 @@ func TestForwardTraeChatCompletionsIDEFallback(t *testing.T) {
 		RemoteBase:   upstream.URL + "/api/remote/v1",
 		CloudIDEHost: upstream.URL,
 	}
-	// 隔离偏好缓存（包级状态）。
-	traeIDEPreferred.mu.Lock()
-	saved := traeIDEPreferred.expires
-	traeIDEPreferred.expires = map[string]time.Time{}
-	traeIDEPreferred.mu.Unlock()
-	t.Cleanup(func() {
-		traeIDEPreferred.mu.Lock()
-		traeIDEPreferred.expires = saved
-		traeIDEPreferred.mu.Unlock()
-	})
+	// 隔离双向通道偏好缓存（包级状态）；种子 Remote 偏好触达 Remote 优先
+	// 路径（生产中由 DeepSeek 类模型的 IDE 4001/4023 探测自动写入）。
+	isolateTraeChannelPrefs(t)
+	svc.traeMarkRemotePreferred(newTraeTestAccount().ID, "GLM-5.3")
 
 	body, _ := json.Marshal(map[string]any{
 		"model":    "GLM-5.3",
@@ -409,15 +435,8 @@ func TestForwardTraeChatCompletionsIDEFallbackStream(t *testing.T) {
 		RemoteBase:   upstream.URL + "/api/remote/v1",
 		CloudIDEHost: upstream.URL,
 	}
-	traeIDEPreferred.mu.Lock()
-	saved := traeIDEPreferred.expires
-	traeIDEPreferred.expires = map[string]time.Time{}
-	traeIDEPreferred.mu.Unlock()
-	t.Cleanup(func() {
-		traeIDEPreferred.mu.Lock()
-		traeIDEPreferred.expires = saved
-		traeIDEPreferred.mu.Unlock()
-	})
+	isolateTraeChannelPrefs(t)
+	svc.traeMarkRemotePreferred(newTraeTestAccount().ID, "GLM-5.3")
 
 	body, _ := json.Marshal(map[string]any{
 		"model":  "GLM-5.3",
@@ -437,4 +456,160 @@ func TestForwardTraeChatCompletionsIDEFallbackStream(t *testing.T) {
 	require.Contains(t, out, `"reasoning_content":"思"`)
 	require.Contains(t, out, "data: [DONE]")
 	require.Equal(t, 1, strings.Count(out, `"role":"assistant"`), "SSE 头只写一次")
+}
+
+// IDE 优先路由：模型在 IDE 可服务时直连（Remote 会话零调用），偏好不落
+// Remote 侧。glm-5.3 实测 IDE 可服务（2~4s）而 Remote 是 agent 脚手架
+// 慢路径（20~41s），这是速度优化的主路径。
+func TestForwardTraeChatCompletionsIDEFirstRouting(t *testing.T) {
+	var ideHits, remoteSessionHits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"list":[{"function":"solo_agent_remote","models":[
+			{"config_name":"GLM-5.3","provider":"zhipu","config_source":1,"is_preset":true}
+		]}]}}`)
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions", func(w http.ResponseWriter, r *http.Request) {
+		remoteSessionHits++
+		fmt.Fprint(w, `{"data":{"chat_session_id":"s-1","message_id":"m-1"}}`)
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/events", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/stop", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		ideHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, strings.Join([]string{
+			`event: output` + "\n" + `data: {"response":"via ide","reasoning_content":null,"tool_calls":null}` + "\n\n",
+			`event: token_usage` + "\n" + `data: {"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}` + "\n\n",
+			`event: done` + "\n" + `data: {"finish_reason":"stop"}` + "\n\n",
+		}, ""))
+	})
+	upstream := httptest.NewServer(mux)
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL}
+	isolateTraeChannelPrefs(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"model":    "GLM-5.3",
+		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+	})
+	for i := 0; i < 2; i++ {
+		c, rec := traeTestContext()
+		result, err := svc.forwardTraeChatCompletions(context.Background(), c, newTraeTestAccount(), body, "GLM-5.3")
+		require.NoError(t, err)
+		require.Equal(t, traeIDEUpstreamEndpoint, result.UpstreamEndpoint)
+		require.Contains(t, rec.Body.String(), "via ide")
+	}
+	require.Equal(t, 2, ideHits, "两笔都应直连 IDE")
+	require.Equal(t, 0, remoteSessionHits, "IDE 可服务的模型不得打 Remote 会话")
+	require.False(t, svc.traePrefersRemote(newTraeTestAccount().ID, "GLM-5.3"))
+}
+
+// IDE 不服务该模型（DeepSeek 系实测 4023/4001 首事件即拒）：自动回落
+// Remote 并学习偏好，第二笔直连 Remote（只付一次 ~0.4s 探测）。
+func TestForwardTraeChatCompletionsIDEFirstFallsBackToRemote(t *testing.T) {
+	var ideHits, remoteSessionHits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"list":[{"function":"solo_agent_remote","models":[
+			{"config_name":"DeepSeek-V4-Flash","provider":"deepseek","config_source":1,"is_preset":true}
+		]}]}}`)
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions", func(w http.ResponseWriter, r *http.Request) {
+		remoteSessionHits++
+		fmt.Fprint(w, `{"data":{"chat_session_id":"s-1","message_id":"m-1"}}`)
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, strings.Join([]string{
+			"event: heartbeat\n\n",
+			`event: plan_item` + "\n" + `data: {"id":"p1","reasoning_content":"","content":"via remote"}` + "\n\n",
+			`event: token_usage` + "\n" + `data: {"prompt_tokens":4,"output_tokens":2}` + "\n\n",
+			"event: done\ndata: [DONE]\n\n",
+		}, ""))
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/stop", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		ideHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: error\ndata: {\"code\":4023,\"message\":\"model not served\"}\n\n")
+	})
+	upstream := httptest.NewServer(mux)
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL}
+	isolateTraeChannelPrefs(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"model":    "DeepSeek-V4-Flash",
+		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+	})
+	c, rec := traeTestContext()
+	result, err := svc.forwardTraeChatCompletions(context.Background(), c, newTraeTestAccount(), body, "DeepSeek-V4-Flash")
+	require.NoError(t, err)
+	require.Equal(t, traeUpstreamEndpoint, result.UpstreamEndpoint, "回落后端点标记应回到 Remote")
+	require.Contains(t, rec.Body.String(), "via remote")
+	require.Equal(t, 1, ideHits)
+	require.Equal(t, 1, remoteSessionHits)
+
+	c2, rec2 := traeTestContext()
+	_, err = svc.forwardTraeChatCompletions(context.Background(), c2, newTraeTestAccount(), body, "DeepSeek-V4-Flash")
+	require.NoError(t, err)
+	require.Contains(t, rec2.Body.String(), "via remote")
+	require.Equal(t, 1, ideHits, "偏好生效后不再探测 IDE")
+	require.Equal(t, 2, remoteSessionHits)
+	require.True(t, svc.traePrefersRemote(newTraeTestAccount().ID, "DeepSeek-V4-Flash"))
+}
+
+// 图片附件是 Remote 侧能力（PR-3.2 renderer media parts）：带图请求即使
+// 模型 IDE 可服务也必须走 Remote。
+func TestForwardTraeChatCompletionsMediaForcesRemote(t *testing.T) {
+	var ideHits, remoteSessionHits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"list":[{"function":"solo_agent_remote","models":[
+			{"config_name":"GLM-5.3","provider":"zhipu","config_source":1,"is_preset":true}
+		]}]}}`)
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions", func(w http.ResponseWriter, r *http.Request) {
+		remoteSessionHits++
+		fmt.Fprint(w, `{"data":{"chat_session_id":"s-1","message_id":"m-1"}}`)
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, strings.Join([]string{
+			`event: plan_item` + "\n" + `data: {"id":"p1","reasoning_content":"","content":"image ok"}` + "\n\n",
+			`event: token_usage` + "\n" + `data: {"prompt_tokens":4,"output_tokens":2}` + "\n\n",
+			"event: done\ndata: [DONE]\n\n",
+		}, ""))
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/stop", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		ideHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: output\ndata: {\"response\":\"via ide\"}\n\n")
+	})
+	upstream := httptest.NewServer(mux)
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL}
+	isolateTraeChannelPrefs(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"model": "GLM-5.3",
+		"messages": []map[string]any{{
+			"role": "user",
+			"content": []map[string]any{
+				{"type": "text", "text": "看图"},
+				{"type": "image_url", "image_url": map[string]any{"url": "https://example.com/a.png"}},
+			},
+		}},
+	})
+	c, rec := traeTestContext()
+	_, err := svc.forwardTraeChatCompletions(context.Background(), c, newTraeTestAccount(), body, "GLM-5.3")
+	require.NoError(t, err)
+	require.Contains(t, rec.Body.String(), "image ok")
+	require.Equal(t, 0, ideHits, "带图请求不得走 IDE（丢图）")
+	require.Equal(t, 1, remoteSessionHits)
 }

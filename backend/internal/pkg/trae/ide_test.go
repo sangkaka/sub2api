@@ -247,3 +247,17 @@ func TestIDETranslatorToolCallSingleFrame(t *testing.T) {
 	require.JSONEq(t, `{}`, result.ToolCalls[1].Arguments)
 	require.NotEmpty(t, result.ToolCalls[1].ID, "无 id 时必须生成稳定 id")
 }
+
+// 通道回落判定：IDE 模型不可服务（4001/4023）且未输出 → Remote 哨兵；
+// 已有输出或其它错误码不回落。
+func TestIDETranslatorFallbackError(t *testing.T) {
+	tr := NewIDETranslator("m")
+	require.Nil(t, tr.FallbackError(Event{Name: "error", Data: map[string]any{"code": 1001, "message": "auth"}}), "认证错误不构成通道回落")
+	require.Nil(t, tr.FallbackError(Event{Name: "output", Data: map[string]any{"response": "hi"}}), "输出帧不构成回落")
+	ue := tr.FallbackError(Event{Name: "error", Data: map[string]any{"code": 4023, "message": "not served"}})
+	require.NotNil(t, ue)
+	require.Equal(t, RemoteFallbackCode, ue.Code)
+	tr2 := NewIDETranslator("m")
+	tr2.ProcessEvent(Event{Name: "output", Data: map[string]any{"response": "hi"}})
+	require.Nil(t, tr2.FallbackError(Event{Name: "error", Data: map[string]any{"code": 4023, "message": "late"}}), "已有输出不得回落")
+}

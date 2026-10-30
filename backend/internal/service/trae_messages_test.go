@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -37,6 +36,7 @@ func TestForwardAnthropicViaTraeBuffered(t *testing.T) {
 	upstream := newTraeTestUpstream(t, traeStreamEvents())
 	defer upstream.Close()
 	svc := newTraeTestGateway(t, upstream)
+	isolateTraeChannelPrefs(t)
 
 	c, rec := traeTestContext()
 	c.Request.Header.Set("Content-Type", "application/json")
@@ -61,6 +61,7 @@ func TestForwardAnthropicViaTraeStream(t *testing.T) {
 	upstream := newTraeTestUpstream(t, traeStreamEvents())
 	defer upstream.Close()
 	svc := newTraeTestGateway(t, upstream)
+	isolateTraeChannelPrefs(t)
 
 	c, rec := traeTestContext()
 	c.Request.Header.Set("Content-Type", "application/json")
@@ -136,15 +137,7 @@ func TestForwardAnthropicViaTraeToolHistoryWire(t *testing.T) {
 	}
 	// 走 1005→IDE 回落会写包级偏好缓存；隔离并恢复，避免污染同账号同模型
 	// 的其它测试（包级状态按测试串行共享）。
-	traeIDEPreferred.mu.Lock()
-	savedPrefs := traeIDEPreferred.expires
-	traeIDEPreferred.expires = map[string]time.Time{}
-	traeIDEPreferred.mu.Unlock()
-	t.Cleanup(func() {
-		traeIDEPreferred.mu.Lock()
-		traeIDEPreferred.expires = savedPrefs
-		traeIDEPreferred.mu.Unlock()
-	})
+	isolateTraeChannelPrefs(t)
 
 	body := map[string]any{
 		"model": "GLM-5.3", "max_tokens": 500,
@@ -248,15 +241,7 @@ func TestForwardAnthropicViaTraeStreamFragmentedTools(t *testing.T) {
 		RemoteBase:   upstream.URL + "/api/remote/v1",
 		CloudIDEHost: upstream.URL,
 	}
-	traeIDEPreferred.mu.Lock()
-	savedPrefs := traeIDEPreferred.expires
-	traeIDEPreferred.expires = map[string]time.Time{}
-	traeIDEPreferred.mu.Unlock()
-	t.Cleanup(func() {
-		traeIDEPreferred.mu.Lock()
-		traeIDEPreferred.expires = savedPrefs
-		traeIDEPreferred.mu.Unlock()
-	})
+	isolateTraeChannelPrefs(t)
 
 	body := map[string]any{
 		"model": "GLM-5.3", "max_tokens": 500, "stream": true,

@@ -103,10 +103,21 @@ func (s *OpenAIGatewayService) forwardTraeChatCompletions(
 	}
 
 	client := s.traeClientForAccount(ctx, account)
-	// Remote 对部分模型固定 1005（kimi-k3.1-pro 实测）：已确认的账号+模型
-	// 直连 IDE 端点，跳过注定失败的 Remote 会话。
-	if s.traePrefersIDE(account.ID, upstreamModel) {
-		return s.forwardTraeIDETurn(ctx, c, client, token, account, chatReq, originalModel, billingModel, upstreamModel, startTime)
+	// IDE 优先路由：llm_utils_chat 是裸 LLM 端点（无 Remote 会话的 agent
+	// 脚手架——沙箱/规划/每请求 ~23.5K 系统注入，琐碎问题实测 20~41s vs
+	// IDE 2~4s），且提示缓存只在 IDE 生效。图片附件与 1M Max 是 Remote 侧
+	// 能力，带这类载荷或已确认 IDE 不服务的模型（4001/4023 缓存）走 Remote。
+	mustRemote := len(trae.MediaQueryParts(toTraeMessages(chatReq.Messages))) > 0 ||
+		isTraeCredentialTrue(account, "max_mode") ||
+		s.traePrefersRemote(account.ID, upstreamModel)
+	if !mustRemote {
+		result, err := s.forwardTraeIDETurn(ctx, c, client, token, account, chatReq, originalModel, billingModel, upstreamModel, startTime)
+		if err == nil || !isTraeRemoteFallbackError(err) {
+			return result, err
+		}
+		// IDE 首事件即拒（模型不可服务，未写字节）：记偏好，改走 Remote。
+		s.traeMarkRemotePreferred(account.ID, upstreamModel)
+		SetActualOpenAIUpstreamEndpoint(c, traeUpstreamEndpoint)
 	}
 	descriptor, err := s.traeModelDescriptor(ctx, client, account, token, upstreamModel)
 	if err != nil {
@@ -247,6 +258,10 @@ func (s *OpenAIGatewayService) traeMarkIDEPreferred(accountID int64, model strin
 		traeIDEPreferred.expires = map[string]time.Time{}
 	}
 	traeIDEPreferred.expires[key] = time.Now().Add(traeIDEPreferredTTL)
+	// 偏好互斥：确认 IDE 可服务即清除反向偏好。
+	traeRemotePreferred.mu.Lock()
+	delete(traeRemotePreferred.expires, key)
+	traeRemotePreferred.mu.Unlock()
 }
 
 func (s *OpenAIGatewayService) traePrefersIDE(accountID int64, model string) bool {
@@ -257,6 +272,42 @@ func (s *OpenAIGatewayService) traePrefersIDE(accountID int64, model string) boo
 	return ok && time.Now().Before(expiry)
 }
 
+// traeRemotePreferred 缓存「账号+模型 → IDE 不服务（4001/4023）」的偏好。
+// IDE 优先路由下，仅 Remote 可服务的模型（DeepSeek 系实测）每进程只付
+// 一次 ~0.4s 的快速失败探测，之后直连 Remote。
+var traeRemotePreferred struct {
+	mu      sync.Mutex
+	expires map[string]time.Time
+}
+
+func (s *OpenAIGatewayService) traeMarkRemotePreferred(accountID int64, model string) {
+	key := fmt.Sprintf("%d|%s", accountID, model)
+	traeRemotePreferred.mu.Lock()
+	defer traeRemotePreferred.mu.Unlock()
+	if traeRemotePreferred.expires == nil {
+		traeRemotePreferred.expires = map[string]time.Time{}
+	}
+	traeRemotePreferred.expires[key] = time.Now().Add(traeIDEPreferredTTL)
+	// 偏好互斥：确认仅 Remote 可服务即清除反向偏好。
+	traeIDEPreferred.mu.Lock()
+	delete(traeIDEPreferred.expires, key)
+	traeIDEPreferred.mu.Unlock()
+}
+
+func (s *OpenAIGatewayService) traePrefersRemote(accountID int64, model string) bool {
+	key := fmt.Sprintf("%d|%s", accountID, model)
+	traeRemotePreferred.mu.Lock()
+	defer traeRemotePreferred.mu.Unlock()
+	expiry, ok := traeRemotePreferred.expires[key]
+	return ok && time.Now().Before(expiry)
+}
+
+// isTraeRemoteFallbackError 识别回合层返回的「IDE 不服务该模型」回落信号。
+func isTraeRemoteFallbackError(err error) bool {
+	ue := trae.AsUpstreamError(err)
+	return ue != nil && ue.Code == trae.RemoteFallbackCode
+}
+
 // traeTurnTranslator 是回合管线消费的翻译器契约：Remote 快照翻译器与
 // IDE（llm_utils_chat）增量翻译器共用同一套流式/缓冲收尾逻辑。
 type traeTurnTranslator interface {
@@ -264,6 +315,9 @@ type traeTurnTranslator interface {
 	SawOutput() bool
 	ProcessEvent(trae.Event) []trae.Delta
 	Finalize(bool) (*trae.TurnResult, []trae.Delta)
+	// FallbackError 判定本通道流中需要换通道重试的错误事件（未输出前）：
+	// Remote 1005 → IDE；IDE 4001/4023（模型不可服务）→ Remote。
+	FallbackError(trae.Event) *trae.UpstreamError
 }
 
 // traeEventSource 打开一个回合的事件流（Remote 两步会话第二步，或 IDE
@@ -352,7 +406,7 @@ loop:
 			if ev.Name == trae.EventDone {
 				doneSeen = true
 			}
-			if fallback := traeIDEFallbackEvent(ev, translator); fallback != nil {
+			if fallback := translator.FallbackError(ev); fallback != nil {
 				// Remote 对该模型固定 1005：未写头，干净交上层回落 IDE。
 				return nil, fallback
 			}
@@ -425,23 +479,6 @@ loop:
 	}
 	_ = streamFailed
 	return s.finishTraeStream(c, account, translator, clientDisconnected, doneSeen, toolCallBase, firstTokenMs, originalModel, billingModel, upstreamModel, upstreamEndpoint, effort, chunkID, created, startTime, writeDelta, ensureHead)
-}
-
-// traeIDEFallbackEvent 判定 Remote 流中需要回落 IDE 端点的错误事件：
-// 业务码 1005 且尚未观察到模型输出（kimi-k3.1-pro 实测固定复现）。
-func traeIDEFallbackEvent(ev trae.Event, translator traeTurnTranslator) error {
-	if ev.Name != trae.EventError || translator.SawOutput() {
-		return nil
-	}
-	code, _ := trae.ExtractErrorDetails(ev.Data)
-	if code != trae.IDEFallbackCode {
-		return nil
-	}
-	return &trae.UpstreamError{
-		Kind:    trae.ErrorKindUpstream,
-		Code:    trae.IDEFallbackCode,
-		Message: "trae remote rejected this model (code 1005); retry via llm_utils_chat",
-	}
 }
 
 // isTraeIDEFallbackError 识别回合层返回的 1005 回落信号。
@@ -545,7 +582,7 @@ func (s *OpenAIGatewayService) bufferedTraeTurn(
 				events = nil
 				continue
 			}
-			if fallback := traeIDEFallbackEvent(ev, translator); fallback != nil {
+			if fallback := translator.FallbackError(ev); fallback != nil {
 				return nil, fallback
 			}
 			if firstTokenMs == nil && !isTraeHeartbeatEvent(ev) {
