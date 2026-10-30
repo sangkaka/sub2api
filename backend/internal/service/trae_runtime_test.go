@@ -616,9 +616,54 @@ func TestForwardTraeChatCompletionsIDEFirstFallsBackToRemote(t *testing.T) {
 	require.True(t, svc.traePrefersRemote(newTraeTestAccount().ID, "DeepSeek-V4-Flash"))
 }
 
-// 图片附件是 Remote 侧能力（PR-3.2 renderer media parts）：带图请求即使
-// 模型 IDE 可服务也必须走 Remote。
-func TestForwardTraeChatCompletionsMediaForcesRemote(t *testing.T) {
+// 图片附件（PR-3.2 renderer media parts）2026-10-30 实测为带毒路径：Remote
+// 会话回 200 但模型读不到图（沙箱 /workspace/.uploads 为空，三模型同测）。
+// 默认必须干净 400 拒绝；仅当账号 credentials.allow_remote_images=true
+// （上游修复后的运营开关）才透传 Remote——此时即使模型 IDE 可服务也不得
+// 走 IDE（丢图）。
+func TestForwardTraeChatCompletionsMediaRejectedByDefault(t *testing.T) {
+	var ideHits, remoteSessionHits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"list":[{"function":"solo_agent_remote","models":[
+			{"config_name":"GLM-5.3","provider":"zhipu","config_source":1,"is_preset":true}
+		]}]}}`)
+	})
+	mux.HandleFunc("/api/remote/v1/chat_sessions", func(w http.ResponseWriter, r *http.Request) {
+		remoteSessionHits++
+		fmt.Fprint(w, `{"data":{"chat_session_id":"s-1","message_id":"m-1"}}`)
+	})
+	mux.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		ideHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: output\ndata: {\"response\":\"via ide\"}\n\n")
+	})
+	upstream := httptest.NewServer(mux)
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL, ModelGatewayHost: upstream.URL}
+	isolateTraeChannelPrefs(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"model": "GLM-5.3",
+		"messages": []map[string]any{{
+			"role": "user",
+			"content": []map[string]any{
+				{"type": "text", "text": "看图"},
+				{"type": "image_url", "image_url": map[string]any{"url": "https://example.com/a.png"}},
+			},
+		}},
+	})
+	c, rec := traeTestContext()
+	_, err := svc.forwardTraeChatCompletions(context.Background(), c, newTraeTestAccount(), body, "GLM-5.3")
+	require.Error(t, err, "默认必须拒绝带图请求而不是透传 Remote")
+	require.Equal(t, http.StatusBadRequest, rec.Code, "干净 400 而非带毒 200")
+	require.Contains(t, rec.Body.String(), "image inputs are not supported")
+	require.Equal(t, 0, ideHits, "拒绝发生在任何上游调用之前")
+	require.Equal(t, 0, remoteSessionHits, "拒绝发生在任何上游调用之前")
+}
+
+func TestForwardTraeChatCompletionsMediaOptInForcesRemote(t *testing.T) {
 	var ideHits, remoteSessionHits int
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
@@ -650,6 +695,9 @@ func TestForwardTraeChatCompletionsMediaForcesRemote(t *testing.T) {
 	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL, ModelGatewayHost: upstream.URL}
 	isolateTraeChannelPrefs(t)
 
+	acct := newTraeTestAccount()
+	acct.Credentials["allow_remote_images"] = true
+
 	body, _ := json.Marshal(map[string]any{
 		"model": "GLM-5.3",
 		"messages": []map[string]any{{
@@ -661,7 +709,7 @@ func TestForwardTraeChatCompletionsMediaForcesRemote(t *testing.T) {
 		}},
 	})
 	c, rec := traeTestContext()
-	_, err := svc.forwardTraeChatCompletions(context.Background(), c, newTraeTestAccount(), body, "GLM-5.3")
+	_, err := svc.forwardTraeChatCompletions(context.Background(), c, acct, body, "GLM-5.3")
 	require.NoError(t, err)
 	require.Contains(t, rec.Body.String(), "image ok")
 	require.Equal(t, 0, ideHits, "带图请求不得走 IDE（丢图）")

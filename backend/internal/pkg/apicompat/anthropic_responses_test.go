@@ -2295,3 +2295,82 @@ func TestGPT61SolCacheOptionsAndBreakpointsSurviveChatBridge(t *testing.T) {
 		require.Contains(t, string(out.Input), "prompt_cache_breakpoint")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// tool_choice 裸字符串形态归一化（2026-10-30 CC 适配复验 C9：字符串形态曾全模型 400）
+// ---------------------------------------------------------------------------
+
+func TestAnthropicToolChoice_StringFormsToResponses(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		out  string // 期望的 Responses 形态；"<drop>" 表示丢弃
+	}{
+		{"auto", `"auto"`, `"auto"`},
+		{"any", `"any"`, `"required"`},
+		{"required-openai-spelling", `"required"`, `"required"`},
+		{"none", `"none"`, `"none"`},
+		{"tool-nameless", `"tool"`, "<drop>"},
+		{"unknown", `"banana"`, `{"type":"banana"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := convertAnthropicToolChoiceToResponses(json.RawMessage(tc.in))
+			require.NoError(t, err, "字符串形态不得让整个请求 400")
+			if tc.out == "<drop>" {
+				require.Empty(t, out)
+				return
+			}
+			require.JSONEq(t, tc.out, string(out))
+		})
+	}
+}
+
+func TestAnthropicToolChoice_StringFormsToChat(t *testing.T) {
+	declared := map[string]bool{"add": true}
+	cases := []struct {
+		name string
+		in   string
+		out  string
+	}{
+		{"auto", `"auto"`, `"auto"`},
+		{"any", `"any"`, `"required"`},
+		{"required-openai-spelling", `"required"`, `"required"`},
+		{"none", `"none"`, `"none"`},
+		{"tool-nameless", `"tool"`, "<drop>"},
+		{"unknown", `"banana"`, "<drop>"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := convertAnthropicToolChoiceToChat(json.RawMessage(tc.in), declared)
+			require.NoError(t, err, "字符串形态不得让整个请求 400")
+			if tc.out == "<drop>" {
+				require.Empty(t, out)
+				return
+			}
+			require.JSONEq(t, tc.out, string(out))
+		})
+	}
+}
+
+func TestAnthropicToResponses_ToolChoiceStringAutoEndToEnd(t *testing.T) {
+	req := &AnthropicRequest{
+		Model:      "gpt-5.2",
+		MaxTokens:  1024,
+		Messages:   []AnthropicMessage{{Role: "user", Content: json.RawMessage(`"Hello"`)}},
+		ToolChoice: json.RawMessage(`"auto"`),
+	}
+	resp, err := AnthropicToResponses(req)
+	require.NoError(t, err)
+	var tc string
+	require.NoError(t, json.Unmarshal(resp.ToolChoice, &tc))
+	assert.Equal(t, "auto", tc)
+}
+
+// 对象形态回归：{"type":"tool","name":X} 无名（字符串 "tool" 归一化的必然形态）
+// 不得产出 {"type":"function","name":""}（上游会 400）。
+func TestAnthropicToolChoice_ObjectToolNamelessDropped(t *testing.T) {
+	out, err := convertAnthropicToolChoiceToResponses(json.RawMessage(`{"type":"tool"}`))
+	require.NoError(t, err)
+	require.Empty(t, out)
+}

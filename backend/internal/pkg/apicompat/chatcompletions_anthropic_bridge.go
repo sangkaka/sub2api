@@ -357,6 +357,7 @@ func anthropicToolsToChatTools(tools []AnthropicTool) []ChatTool {
 //	{"type":"none"}            → "none"
 //	{"type":"tool","name":"X"} → {"type":"function","function":{"name":"X"}} (X declared)
 func convertAnthropicToolChoiceToChat(raw json.RawMessage, declared map[string]bool) (json.RawMessage, error) {
+	raw = normalizeAnthropicToolChoiceString(raw)
 	var tc struct {
 		Type string `json:"type"`
 		Name string `json:"name"`

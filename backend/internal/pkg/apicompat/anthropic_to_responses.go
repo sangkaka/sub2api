@@ -90,6 +90,30 @@ func AnthropicToResponsesWithMinOutputTokens(req *AnthropicRequest, minOutputTok
 	return out, nil
 }
 
+// normalizeAnthropicToolChoiceString 把 tool_choice 的裸字符串形态归一化为
+// Anthropic 对象形态。官方协议只定义对象形态，但镜像 OpenAI chat 写法的
+// 客户端会发 "auto"/"any"/"required"/"none" 字符串——直接对 struct 反序列
+// 化会 400 整个请求（2026-10-30 CC 适配复验 C9 实测全模型复现）。归一化后
+// 走既有对象分支：已知字符串映射到等价 type，未知字符串规范成同名 type、
+// 由各转换器的 unknown-type 分支决定丢弃或透传。
+func normalizeAnthropicToolChoiceString(raw json.RawMessage) json.RawMessage {
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return raw // 对象形态（或其它非法值）：交给原 struct 反序列化路径
+	}
+	switch s {
+	case "auto", "any", "none":
+	case "required": // OpenAI 拼写，Anthropic 等价 any
+		s = "any"
+	case "": // JSON 空字符串：无语义，按未知 type 处理
+	}
+	normalized, err := json.Marshal(map[string]string{"type": s})
+	if err != nil {
+		return raw
+	}
+	return normalized
+}
+
 // convertAnthropicToolChoiceToResponses maps Anthropic tool_choice to Responses format.
 //
 //	{"type":"auto"}            → "auto"
@@ -97,6 +121,7 @@ func AnthropicToResponsesWithMinOutputTokens(req *AnthropicRequest, minOutputTok
 //	{"type":"none"}            → "none"
 //	{"type":"tool","name":"X"} → {"type":"function","name":"X"}
 func convertAnthropicToolChoiceToResponses(raw json.RawMessage) (json.RawMessage, error) {
+	raw = normalizeAnthropicToolChoiceString(raw)
 	var tc struct {
 		Type string `json:"type"`
 		Name string `json:"name"`
@@ -113,6 +138,11 @@ func convertAnthropicToolChoiceToResponses(raw json.RawMessage) (json.RawMessage
 	case "none":
 		return json.Marshal("none")
 	case "tool":
+		if tc.Name == "" {
+			// 无名的 tool 选择无法指名函数（字符串 "tool" 归一化的必然形态），
+			// 下发 {"type":"function","name":""} 会被上游 400——丢弃。
+			return nil, nil
+		}
 		return json.Marshal(map[string]any{
 			"type": "function",
 			"name": tc.Name,

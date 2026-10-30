@@ -108,7 +108,18 @@ func (s *OpenAIGatewayService) forwardTraeChatCompletions(
 	// 脚手架——沙箱/规划/每请求 ~23.5K 系统注入，琐碎问题实测 20~41s vs
 	// IDE 2~4s），且提示缓存只在 IDE 生效。图片附件与 1M Max 是 Remote 侧
 	// 能力，带这类载荷或已确认 IDE 不服务的模型（4001/4023 缓存）走 Remote。
-	mustRemote := len(trae.MediaQueryParts(toTraeMessages(chatReq.Messages))) > 0 ||
+	hasMediaParts := len(trae.MediaQueryParts(toTraeMessages(chatReq.Messages))) > 0
+	if hasMediaParts && !isTraeCredentialTrue(account, "allow_remote_images") {
+		// 2026-10-30 实测（deepseek/glm/kimi 三模型同测）：Remote 会话对带图
+		// 请求回 200，但 renderer media parts 并未让模型读到图片——沙箱里
+		// /workspace/.uploads 为空，模型自信回答「没有收到图片」。带毒 200
+		// 比干净 400 更糟，默认整体拒绝；上游修复后按账号打开
+		// credentials.allow_remote_images 即可恢复透传，无需发版。
+		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error",
+			"image inputs are not supported on the trAE upstream for model "+originalModel+": the upstream session does not deliver image attachments to the model; remove image blocks or use a vision-capable model")
+		return nil, errors.New("trAE upstream does not support image inputs (model " + originalModel + ")")
+	}
+	mustRemote := hasMediaParts ||
 		isTraeCredentialTrue(account, "max_mode") ||
 		isTraeForcedRemote(account, originalModel, upstreamModel) ||
 		s.traePrefersRemote(account.ID, upstreamModel)
