@@ -33,6 +33,19 @@ type Client struct {
 	ProxyURL string
 	// HTTP 用于注入代理/超时；nil 时按 ProxyURL 构建默认客户端。
 	HTTP *http.Client
+	// ModelGatewayHost 覆盖 llm_utils_chat 的模型网关域名（默认
+	// DefaultModelGatewayHost）。两个 IDE 入口域名服务不同的模型子集
+	// （4.111 中转生产实锤）：企业域名入口服务 kimi/glm 系，模型网关入口
+	// 服务 DeepSeek 系（mchost 实测 1.5s 首文本 + 提示缓存）。
+	ModelGatewayHost string
+}
+
+// WithCloudIDEHost 返回把 llm_utils_chat/身份端点指到 host 的浅拷贝
+// （Client 为纯值结构，无共享可变状态）。
+func (c *Client) WithCloudIDEHost(host string) *Client {
+	out := *c
+	out.CloudIDEHost = host
+	return &out
 }
 
 func (c *Client) apiHost() string {

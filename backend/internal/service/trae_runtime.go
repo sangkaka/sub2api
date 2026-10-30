@@ -208,7 +208,10 @@ func (s *OpenAIGatewayService) runTraeTurn(
 }
 
 // forwardTraeIDETurn 走 llm_utils_chat（IDE/TraeWork 兼容会话）执行回合：
-// 原生工具字段而非文本桥；无两步会话与 stop 收尾。
+// 原生工具字段而非文本桥；无两步会话与 stop 收尾。llm_utils_chat 有两个
+// 入口域名且模型子集互补（2026-10-30 双主机实测：企业域名入口服务
+// kimi/glm 系、DeepSeek 系 4023；模型网关入口服务 DeepSeek/glm 系、
+// kimi 系 1005），按 (账号,模型) 缓存生效入口，未命中时依次探测。
 func (s *OpenAIGatewayService) forwardTraeIDETurn(
 	ctx context.Context,
 	c *gin.Context,
@@ -235,10 +238,78 @@ func (s *OpenAIGatewayService) forwardTraeIDETurn(
 		ToolChoice:        json.RawMessage(chatReq.ToolChoice),
 		ParallelToolCalls: chatReq.ParallelToolCalls,
 	}
-	eventsFn := func() (<-chan trae.Event, <-chan error) {
-		return client.IDEChat(ctx, token, ideReq)
+	var lastErr error
+	for _, host := range s.traeIDEHostCandidates(client, account, upstreamModel) {
+		at := client.WithCloudIDEHost(host)
+		eventsFn := func() (<-chan trae.Event, <-chan error) {
+			return at.IDEChat(ctx, token, ideReq)
+		}
+		result, err := s.runTraeTurn(ctx, c, account, eventsFn, trae.NewIDETranslator(originalModel), chatReq, originalModel, billingModel, upstreamModel, "", traeIDEUpstreamEndpoint, startTime)
+		if err == nil {
+			s.traeMarkIDEHost(account.ID, upstreamModel, host)
+			return result, nil
+		}
+		lastErr = err
+		if !isTraeRemoteFallbackError(err) {
+			// 非入口级错误（限流/认证/传输）换域名无意义，原样上抛。
+			return result, err
+		}
+		// 模型在该入口不可服务（首事件即拒，未写字节）：试下一入口。
 	}
-	return s.runTraeTurn(ctx, c, account, eventsFn, trae.NewIDETranslator(originalModel), chatReq, originalModel, billingModel, upstreamModel, "", traeIDEUpstreamEndpoint, startTime)
+	// 双入口都不服务该模型：保留哨兵错误，由上层回落 Remote。
+	return nil, lastErr
+}
+
+// traeIDEHostCandidates 返回 llm_utils_chat 的入口尝试顺序：生效缓存
+// 优先，否则企业域名（身份端点同源，kimi/glm 实测可用）在前、模型网关
+// （DeepSeek 系唯一可用入口，1.5s 首文本 + 提示缓存）在后，去重。
+func (s *OpenAIGatewayService) traeIDEHostCandidates(client *trae.Client, account *Account, upstreamModel string) []string {
+	gateway := client.ModelGatewayHost
+	if gateway == "" {
+		gateway = trae.DefaultModelGatewayHost
+	}
+	primary := client.CloudIDEHost
+	seen := map[string]bool{}
+	var out []string
+	for _, host := range []string{s.traePreferredIDEHost(account.ID, upstreamModel), primary, gateway} {
+		host = strings.TrimSpace(strings.TrimRight(host, "/"))
+		if host == "" || seen[host] {
+			continue
+		}
+		seen[host] = true
+		out = append(out, host)
+	}
+	return out
+}
+
+// traeIDEHostPref 缓存「账号+模型 → 生效的 llm_utils_chat 入口域名」，
+// 进程级、30 分钟过期（与通道偏好同 TTL），避免每请求重复探测。
+var traeIDEHostPref struct {
+	mu     sync.Mutex
+	hosts  map[string]string
+	expiry map[string]time.Time
+}
+
+func (s *OpenAIGatewayService) traeMarkIDEHost(accountID int64, model, host string) {
+	key := fmt.Sprintf("%d|%s", accountID, model)
+	traeIDEHostPref.mu.Lock()
+	defer traeIDEHostPref.mu.Unlock()
+	if traeIDEHostPref.hosts == nil {
+		traeIDEHostPref.hosts = map[string]string{}
+		traeIDEHostPref.expiry = map[string]time.Time{}
+	}
+	traeIDEHostPref.hosts[key] = host
+	traeIDEHostPref.expiry[key] = time.Now().Add(traeIDEPreferredTTL)
+}
+
+func (s *OpenAIGatewayService) traePreferredIDEHost(accountID int64, model string) string {
+	key := fmt.Sprintf("%d|%s", accountID, model)
+	traeIDEHostPref.mu.Lock()
+	defer traeIDEHostPref.mu.Unlock()
+	if expiry, ok := traeIDEHostPref.expiry[key]; ok && time.Now().Before(expiry) {
+		return traeIDEHostPref.hosts[key]
+	}
+	return ""
 }
 
 // traeIDEPreferred 缓存「账号+模型 → Remote 固定 1005」的偏好，避免每个

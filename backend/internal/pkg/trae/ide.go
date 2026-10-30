@@ -479,15 +479,17 @@ func (t *IDETranslator) SawOutput() bool       { return t.sawOutput }
 func (t *IDETranslator) Model() string         { return t.model }
 func (t *IDETranslator) ProviderModel() string { return t.provider }
 
-// FallbackError 判定 IDE 流中需要回落 Remote 会话的错误事件：模型不可
-// 服务（4001/4023）且尚未观察到输出。此类错误实测为首事件即拒（~0.4s），
-// 未向客户端写字节，上层可干净回落。
+// FallbackError 判定 IDE 流中需要换入口重试的错误事件：模型在该入口
+// 不可服务（4001 参数无效 / 4023 服务异常 / 1005 不在目录——企业域名
+// 入口对 DeepSeek 系 4023、模型网关入口对 kimi 系 1005，双主机实测）
+// 且尚未观察到输出。此类错误实测为首事件即拒（~0.4s），未向客户端写
+// 字节，上层可干净地换主机或回落 Remote。
 func (t *IDETranslator) FallbackError(ev Event) *UpstreamError {
 	if ev.Name != EventError || t.sawOutput {
 		return nil
 	}
 	code, message := ExtractErrorDetails(ev.Data)
-	if code != "4001" && code != "4023" {
+	if code != "4001" && code != "4023" && code != IDEFallbackCode {
 		return nil
 	}
 	return &UpstreamError{

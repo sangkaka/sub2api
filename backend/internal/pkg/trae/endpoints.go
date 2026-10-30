@@ -18,6 +18,9 @@ const (
 	DefaultRemoteBase = "https://trae-api-cn.mchost.guru/api/remote/v1"
 	// DefaultWebOrigin 浏览器 Origin/Referer，上游按它识别 Solo Web 客户端。
 	DefaultWebOrigin = "https://solo.trae.cn"
+	// DefaultModelGatewayHost 是 llm_utils_chat 的模型网关域名（与身份
+	// 端点分离）。DeepSeek 系只在此入口可服务（2026-10-30 双主机实测）。
+	DefaultModelGatewayHost = "https://trae-api-cn.mchost.guru"
 
 	// PublicClientID 是 Trae IDE 的公开 OAuth client id；ClientSecret 为占位
 	// 值 "-"（原生客户端不校验）。

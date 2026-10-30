@@ -132,8 +132,9 @@ func TestForwardAnthropicViaTraeToolHistoryWire(t *testing.T) {
 	defer upstream.Close()
 	svc := newTraeTestGateway(t, upstream)
 	svc.traeClient = &trae.Client{
-		RemoteBase:   upstream.URL + "/api/remote/v1",
-		CloudIDEHost: upstream.URL,
+		RemoteBase:       upstream.URL + "/api/remote/v1",
+		CloudIDEHost:     upstream.URL,
+		ModelGatewayHost: upstream.URL,
 	}
 	// 走 1005→IDE 回落会写包级偏好缓存；隔离并恢复，避免污染同账号同模型
 	// 的其它测试（包级状态按测试串行共享）。
@@ -238,8 +239,9 @@ func TestForwardAnthropicViaTraeStreamFragmentedTools(t *testing.T) {
 	defer upstream.Close()
 	svc := newTraeTestGateway(t, upstream)
 	svc.traeClient = &trae.Client{
-		RemoteBase:   upstream.URL + "/api/remote/v1",
-		CloudIDEHost: upstream.URL,
+		RemoteBase:       upstream.URL + "/api/remote/v1",
+		CloudIDEHost:     upstream.URL,
+		ModelGatewayHost: upstream.URL,
 	}
 	isolateTraeChannelPrefs(t)
 

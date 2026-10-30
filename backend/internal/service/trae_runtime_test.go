@@ -85,8 +85,9 @@ func newTraeTestGateway(t *testing.T, upstream *httptest.Server) *OpenAIGatewayS
 	svc := &OpenAIGatewayService{}
 	provider := NewTraeTokenProvider(nil, nil, nil)
 	svc.SetTraeDeps(provider, nil, &trae.Client{
-		RemoteBase:   upstream.URL + "/api/remote/v1",
-		CloudIDEHost: upstream.URL,
+		RemoteBase:       upstream.URL + "/api/remote/v1",
+		CloudIDEHost:     upstream.URL,
+		ModelGatewayHost: upstream.URL,
 	})
 	return svc
 }
@@ -103,6 +104,10 @@ func isolateTraeChannelPrefs(t *testing.T) {
 	savedRemote := traeRemotePreferred.expires
 	traeRemotePreferred.expires = map[string]time.Time{}
 	traeRemotePreferred.mu.Unlock()
+	traeIDEHostPref.mu.Lock()
+	savedHosts, savedHostExpiry := traeIDEHostPref.hosts, traeIDEHostPref.expiry
+	traeIDEHostPref.hosts, traeIDEHostPref.expiry = map[string]string{}, map[string]time.Time{}
+	traeIDEHostPref.mu.Unlock()
 	t.Cleanup(func() {
 		traeIDEPreferred.mu.Lock()
 		traeIDEPreferred.expires = savedIDE
@@ -110,6 +115,9 @@ func isolateTraeChannelPrefs(t *testing.T) {
 		traeRemotePreferred.mu.Lock()
 		traeRemotePreferred.expires = savedRemote
 		traeRemotePreferred.mu.Unlock()
+		traeIDEHostPref.mu.Lock()
+		traeIDEHostPref.hosts, traeIDEHostPref.expiry = savedHosts, savedHostExpiry
+		traeIDEHostPref.mu.Unlock()
 	})
 }
 
@@ -487,7 +495,7 @@ func TestForwardTraeChatCompletionsIDEFirstRouting(t *testing.T) {
 	upstream := httptest.NewServer(mux)
 	defer upstream.Close()
 	svc := newTraeTestGateway(t, upstream)
-	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL}
+	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL, ModelGatewayHost: upstream.URL}
 	isolateTraeChannelPrefs(t)
 
 	body, _ := json.Marshal(map[string]any{
@@ -538,7 +546,7 @@ func TestForwardTraeChatCompletionsIDEFirstFallsBackToRemote(t *testing.T) {
 	upstream := httptest.NewServer(mux)
 	defer upstream.Close()
 	svc := newTraeTestGateway(t, upstream)
-	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL}
+	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL, ModelGatewayHost: upstream.URL}
 	isolateTraeChannelPrefs(t)
 
 	body, _ := json.Marshal(map[string]any{
@@ -593,7 +601,7 @@ func TestForwardTraeChatCompletionsMediaForcesRemote(t *testing.T) {
 	upstream := httptest.NewServer(mux)
 	defer upstream.Close()
 	svc := newTraeTestGateway(t, upstream)
-	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL}
+	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL, ModelGatewayHost: upstream.URL}
 	isolateTraeChannelPrefs(t)
 
 	body, _ := json.Marshal(map[string]any{
@@ -612,4 +620,71 @@ func TestForwardTraeChatCompletionsMediaForcesRemote(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "image ok")
 	require.Equal(t, 0, ideHits, "带图请求不得走 IDE（丢图）")
 	require.Equal(t, 1, remoteSessionHits)
+}
+
+// llm_utils_chat 双入口：企业域名入口 4023（DeepSeek 系实测）→ 自动改试
+// 模型网关入口（mchost，1.5s 首文本）并缓存；第二笔直连网关入口。
+func TestForwardTraeChatCompletionsIDEHostFallback(t *testing.T) {
+	// 入口 A：llm_utils_chat 首事件 4023；Remote 也 1005（两头都不服务）。
+	muxA := http.NewServeMux()
+	muxA.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"list":[{"function":"solo_agent_remote","models":[
+			{"config_name":"deepseek-v4.1-flash","provider":"deepseek","config_source":1,"is_preset":true}
+		]}]}}`)
+	})
+	muxA.HandleFunc("/api/remote/v1/chat_sessions", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"chat_session_id":"s-1","message_id":"m-1"}}`)
+	})
+	muxA.HandleFunc("/api/remote/v1/chat_sessions/s-1/events", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: error\ndata: {\"code\":1005}\n\n")
+	})
+	muxA.HandleFunc("/api/remote/v1/chat_sessions/s-1/stop", func(w http.ResponseWriter, r *http.Request) {})
+	muxA.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: error\ndata: {\"code\":4023,\"message\":\"not served here\"}\n\n")
+	})
+	hostA := httptest.NewServer(muxA)
+	defer hostA.Close()
+
+	// 入口 B：模型网关，llm_utils_chat 正常出流。
+	var gatewayHits int
+	muxB := http.NewServeMux()
+	muxB.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		gatewayHits++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, strings.Join([]string{
+			`event: output` + "\n" + `data: {"response":"via gateway","reasoning_content":null,"tool_calls":null}` + "\n\n",
+			`event: token_usage` + "\n" + `data: {"prompt_tokens":6,"completion_tokens":3,"total_tokens":9}` + "\n\n",
+			`event: done` + "\n" + `data: {"finish_reason":"stop"}` + "\n\n",
+		}, ""))
+	})
+	hostB := httptest.NewServer(muxB)
+	defer hostB.Close()
+
+	svc := newTraeTestGateway(t, hostA)
+	svc.traeClient = &trae.Client{
+		RemoteBase:       hostA.URL + "/api/remote/v1",
+		CloudIDEHost:     hostA.URL,
+		ModelGatewayHost: hostB.URL,
+	}
+	isolateTraeChannelPrefs(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"model":    "deepseek-v4.1-flash",
+		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+	})
+	c, rec := traeTestContext()
+	result, err := svc.forwardTraeChatCompletions(context.Background(), c, newTraeTestAccount(), body, "deepseek-v4.1-flash")
+	require.NoError(t, err)
+	require.Equal(t, traeIDEUpstreamEndpoint, result.UpstreamEndpoint)
+	require.Contains(t, rec.Body.String(), "via gateway")
+	require.Equal(t, 1, gatewayHits)
+
+	// 第二笔：主机偏好命中，直连网关入口（不再付 A 的 4023 探测）。
+	c2, rec2 := traeTestContext()
+	_, err = svc.forwardTraeChatCompletions(context.Background(), c2, newTraeTestAccount(), body, "deepseek-v4.1-flash")
+	require.NoError(t, err)
+	require.Contains(t, rec2.Body.String(), "via gateway")
+	require.Equal(t, 2, gatewayHits)
 }
