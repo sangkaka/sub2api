@@ -150,6 +150,38 @@ func TestIDEUsageKeyFamilies(t *testing.T) {
 	require.Equal(t, 10, legacyStyle.TotalTokens)
 }
 
+func TestIDEUsageCachedKeyFamilies(t *testing.T) {
+	traeStyle := MapIDEUsage(map[string]any{"prompt_tokens": 10, "cache_read_input_tokens": 8})
+	require.NotNil(t, traeStyle.PromptTokensDetails)
+	require.Equal(t, 8, traeStyle.PromptTokensDetails.CachedTokens)
+
+	deepseekStyle := MapIDEUsage(map[string]any{"prompt_tokens": 10, "prompt_cache_hit_tokens": 6})
+	require.NotNil(t, deepseekStyle.PromptTokensDetails)
+	require.Equal(t, 6, deepseekStyle.PromptTokensDetails.CachedTokens)
+
+	openaiNested := MapIDEUsage(map[string]any{
+		"prompt_tokens":         10,
+		"prompt_tokens_details": map[string]any{"cached_tokens": 7},
+	})
+	require.NotNil(t, openaiNested.PromptTokensDetails)
+	require.Equal(t, 7, openaiNested.PromptTokensDetails.CachedTokens)
+
+	openaiFlat := MapIDEUsage(map[string]any{"prompt_tokens": 10, "cached_tokens": 5})
+	require.NotNil(t, openaiFlat.PromptTokensDetails)
+	require.Equal(t, 5, openaiFlat.PromptTokensDetails.CachedTokens)
+
+	noCache := MapIDEUsage(map[string]any{"prompt_tokens": 10, "completion_tokens": 4})
+	require.Nil(t, noCache.PromptTokensDetails)
+
+	// 多键共存时 intValueOf 按声明顺序取先命中的键族。
+	precedence := MapIDEUsage(map[string]any{
+		"prompt_tokens":           10,
+		"cache_read_input_tokens": 8,
+		"prompt_cache_hit_tokens": 6,
+	})
+	require.Equal(t, 8, precedence.PromptTokensDetails.CachedTokens)
+}
+
 // DeviceIDFor 与 service.TraeDeviceID 同源派生（sha256("trae"+uid) mod 1e16）。
 func TestDeviceIDFor(t *testing.T) {
 	id := DeviceIDFor("433084928")

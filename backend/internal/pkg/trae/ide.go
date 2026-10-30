@@ -463,6 +463,8 @@ type IDETranslator struct {
 	// 定位，而不是只剩客户端症状。
 	shapeLogged int
 	dropLogged  int
+	// usageLogged：token_usage 原文采样限次（每回合 1 帧足矣，usage 不分片）。
+	usageLogged int
 	// ToolsRequiringArgs：有必填参数的工具名集合（{"{}"} 完整参数视为
 	// 退化）。nil 表示不过滤（行为与历史一致）。
 	ToolsRequiringArgs map[string]bool
@@ -577,6 +579,12 @@ func (t *IDETranslator) ProcessEvent(ev Event) []Delta {
 	case EventTokenUsage:
 		t.usage = MapIDEUsage(ev.Data)
 		t.sawOutput = true
+		if usageDebug && t.usageLogged < 1 {
+			t.usageLogged++
+			if raw, err := json.Marshal(ev.Data); err == nil {
+				slog.Warn("trae ide token_usage shape sample", "model", t.model, "raw", truncate(string(raw), 800))
+			}
+		}
 	case EventDone:
 		if reason := firstStringValue([]map[string]any{ev.Data}, "finish_reason", "finishReason"); reason != "" {
 			t.finish = reason
@@ -631,6 +639,10 @@ func (t *IDETranslator) processOutput(data map[string]any) []Delta {
 
 // toolShapeDebug 开启后每回合采样前几帧 tool_calls 原文（抓上游形状漂移用）。
 var toolShapeDebug = os.Getenv("TRAE_TOOL_SHAPE_DEBUG") == "1"
+
+// usageDebug 开启后每回合采样一帧 token_usage 原文（抓上游计量键名用——
+// mchost 网关入口对 DeepSeek 是否回缓存字段、回哪个键族，以采样实证）。
+var usageDebug = os.Getenv("TRAE_USAGE_DEBUG") == "1"
 
 // logDroppedToolEntry 记录被丢弃的工具分片原文（每回合限次，防刷屏）。
 func (t *IDETranslator) logDroppedToolEntry(entry map[string]any, reason string) {
@@ -971,7 +983,21 @@ func MapIDEUsage(raw map[string]any) *Usage {
 		total = prompt + completion
 	}
 	out := &Usage{PromptTokens: prompt, CompletionTokens: completion, TotalTokens: total}
-	if cached := intValueOf(usage, "cache_read_input_tokens", "cacheReadInputTokens"); cached > 0 {
+	// 缓存键名三族兼容：企业域名入口回 TRAE 键族（kimi/glm 实测）；
+	// mchost 网关入口对 DeepSeek 系不回 TRAE 键族，DeepSeek 官方与
+	// OpenAI 键族是为它预留的兼容面（是否真回以 TRAE_USAGE_DEBUG 采样实证）。
+	cached := intValueOf(usage,
+		"cache_read_input_tokens",
+		"cacheReadInputTokens",
+		"prompt_cache_hit_tokens",
+		"cached_tokens",
+	)
+	if cached == 0 {
+		if details, ok := usage["prompt_tokens_details"].(map[string]any); ok {
+			cached = intValueOf(details, "cached_tokens", "cachedTokens")
+		}
+	}
+	if cached > 0 {
 		out.PromptTokensDetails = &UsageTokensDetails{CachedTokens: cached}
 	}
 	return out
