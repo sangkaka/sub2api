@@ -273,9 +273,10 @@ func TestForwardAnthropicViaTraeStreamFragmentedTools(t *testing.T) {
 	_, err := svc.forwardAnthropicViaTrae(context.Background(), c, newTraeTestAccount(), encoded, "GLM-5.3")
 	require.NoError(t, err)
 
-	// 解析 Anthropic SSE：tool_use 块名 + 拼接后的 input JSON。
+	// 解析 Anthropic SSE：tool_use 块名 + 增量拼接后的 input JSON。
 	out := rec.Body.String()
 	var toolName, inputJSON string
+	inputDeltaEvents := 0
 	for _, line := range strings.Split(out, "\n") {
 		if !strings.HasPrefix(line, "data: ") {
 			continue
@@ -300,11 +301,15 @@ func TestForwardAnthropicViaTraeStreamFragmentedTools(t *testing.T) {
 		}
 		if evt.Type == "content_block_delta" && evt.Delta != nil && evt.Delta.Type == "input_json_delta" {
 			inputJSON += evt.Delta.PartialJSON
+			inputDeltaEvents++
 		}
 	}
 	require.Equal(t, "write_file", toolName, "必须出现工具块宣告")
 	require.NotEmpty(t, inputJSON, "必须下发工具参数")
 	require.JSONEq(t, `{"path":"a.txt","content":"hello world"}`, inputJSON, "分片参数必须拼成完整 JSON")
+	// 片段必须增量到达（三个参数片段 → 多次 input_json_delta），而不是
+	// 收尾一次性下发——纯工具长回合静默到收尾会被客户端空闲超时掐流。
+	require.GreaterOrEqual(t, inputDeltaEvents, 3, "参数片段必须随流增量下发")
 	require.Contains(t, out, `"stop_reason":"tool_use"`)
 }
 

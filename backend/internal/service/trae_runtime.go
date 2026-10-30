@@ -809,6 +809,11 @@ func toChatToolCalls(calls []trae.ToolCall, baseIndex int) []apicompat.ChatToolC
 	out := make([]apicompat.ChatToolCall, 0, len(calls))
 	for i, call := range calls {
 		index := baseIndex + i
+		if call.Index != nil {
+			// 增量片段自带稳定槽位：下游（OpenAI 流客户端 / Anthropic 状态
+			// 机）按 index 拼接片段，不得重新编号。
+			index = *call.Index
+		}
 		out = append(out, apicompat.ChatToolCall{
 			Index: &index,
 			ID:    call.ID,

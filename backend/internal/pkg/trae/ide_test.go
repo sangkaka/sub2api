@@ -167,11 +167,13 @@ func feedIDEOutput(t *testing.T, tr *IDETranslator, data string) []Delta {
 
 // 大参数工具调用会分片增量下发（生产 CC 实测："Invalid tool parameters"
 // 事故）：首帧带 index/id/name、arguments 为空串，后续帧仅 index+
-// arguments 片段。片段必须累积，收尾合成完整参数，不得提前下发半截 JSON。
+// arguments 片段。片段必须实时透传（带稳定槽位，长回合不得静默到收尾，
+// 否则客户端空闲超时掐流——"response stopped arriving"），完整调用在
+// Finalize 组装进 TurnResult。
 func TestIDETranslatorToolCallFragments(t *testing.T) {
 	tr := NewIDETranslator("kimi")
 
-	var midStream []ToolCall
+	var fragments []ToolCall
 	for _, frame := range []string{
 		`{"response":"","reasoning_content":null,"tool_calls":[{"index":0,"id":"c1","type":"function","function_call":{"name":"write_file","arguments":""}}]}`,
 		`{"response":"","reasoning_content":null,"tool_calls":[{"index":0,"function_call":{"arguments":"{\"path\":\"a"}}]}`,
@@ -179,11 +181,22 @@ func TestIDETranslatorToolCallFragments(t *testing.T) {
 		`{"response":"","reasoning_content":null,"tool_calls":[{"index":0,"function_call":{"arguments":"lo world\"}"}}]}`,
 	} {
 		for _, d := range feedIDEOutput(t, tr, frame) {
-			midStream = append(midStream, d.ToolCalls...)
+			fragments = append(fragments, d.ToolCalls...)
 		}
 	}
-	require.Empty(t, midStream, "分片未拼完前不得下发工具调用增量")
+	// 首帧宣告（id+name），三个参数片段各成一帧，全部携带同一槽位。
+	require.Len(t, fragments, 4)
+	require.Equal(t, "c1", fragments[0].ID)
+	require.Equal(t, "write_file", fragments[0].Name)
+	require.Empty(t, fragments[0].Arguments)
+	for _, frag := range fragments {
+		require.NotNil(t, frag.Index, "片段必须携带槽位")
+		require.Equal(t, 0, *frag.Index, "同一调用的片段槽位一致")
+	}
+	require.Equal(t, `{"path":"a`, fragments[1].Arguments)
+	require.Equal(t, `lo world"}`, fragments[3].Arguments)
 
+	// Finalize 组装完整调用，且不再有尾部增量（流中已交付）。
 	result, tail := tr.Finalize(false)
 	require.Len(t, result.ToolCalls, 1)
 	call := result.ToolCalls[0]
@@ -191,17 +204,26 @@ func TestIDETranslatorToolCallFragments(t *testing.T) {
 	require.Equal(t, "write_file", call.Name)
 	require.JSONEq(t, `{"path":"a.txt","content":"hello world"}`, call.Arguments)
 	require.Equal(t, "tool_calls", result.FinishReason)
-	require.Len(t, tail, 1, "完整调用必须随尾部增量交付给流式管线")
-	require.Len(t, tail[0].ToolCalls, 1)
-	require.JSONEq(t, call.Arguments, tail[0].ToolCalls[0].Arguments)
+	require.Empty(t, tail)
 }
 
-// 并行多工具按 index 交错分片，各自独立拼装、保持首次出现顺序。
+// 并行多工具按 index 交错分片：片段各归其位（槽位不漂移），组装保持
+// 首次出现顺序。
 func TestIDETranslatorToolCallFragmentsInterleaved(t *testing.T) {
 	tr := NewIDETranslator("kimi")
-	feedIDEOutput(t, tr, `{"tool_calls":[{"index":0,"id":"c1","function_call":{"name":"read_file","arguments":""}},{"index":1,"id":"c2","function_call":{"name":"shell","arguments":""}}]}`)
-	feedIDEOutput(t, tr, `{"tool_calls":[{"index":1,"function_call":{"arguments":"{\"cmd\":\"ls\"}"}}]}`)
-	feedIDEOutput(t, tr, `{"tool_calls":[{"index":0,"function_call":{"arguments":"{\"path\":\"a.txt\"}"}}]}`)
+	var fragments []ToolCall
+	for _, frame := range []string{
+		`{"tool_calls":[{"index":0,"id":"c1","function_call":{"name":"read_file","arguments":""}},{"index":1,"id":"c2","function_call":{"name":"shell","arguments":""}}]}`,
+		`{"tool_calls":[{"index":1,"function_call":{"arguments":"{\"cmd\":\"ls\"}"}}]}`,
+		`{"tool_calls":[{"index":0,"function_call":{"arguments":"{\"path\":\"a.txt\"}"}}]}`,
+	} {
+		for _, d := range feedIDEOutput(t, tr, frame) {
+			fragments = append(fragments, d.ToolCalls...)
+		}
+	}
+	require.Len(t, fragments, 4)
+	require.Equal(t, 1, *fragments[2].Index, "index=1 的片段必须归位槽位 1")
+	require.Equal(t, 0, *fragments[3].Index, "index=0 的片段必须归位槽位 0")
 
 	result, _ := tr.Finalize(false)
 	require.Len(t, result.ToolCalls, 2)

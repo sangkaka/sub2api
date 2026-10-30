@@ -454,10 +454,12 @@ type IDETranslator struct {
 }
 
 // ideToolAccumulator 聚合上游分片下发的单个工具调用：首帧带 id/name
-// （arguments 常为空串），后续帧仅 index+arguments 片段。
+// （arguments 常为空串），后续帧仅 index+arguments 片段。slot 是该调用
+// 在 toolAccSeq 中的稳定槽位，透传片段以它为下游拼接键。
 type ideToolAccumulator struct {
 	id   string
 	name string
+	slot int
 	args strings.Builder
 }
 
@@ -512,17 +514,19 @@ func (t *IDETranslator) processOutput(data map[string]any) []Delta {
 	}
 	if items, ok := data["tool_calls"].([]any); ok && len(items) > 0 {
 		// 工具调用按 OpenAI 惯例分片增量下发：首帧带 name/id、后续帧只带
-		// index+arguments 片段。片段在此累积，完整调用在 Finalize 才随尾
-		// 部增量下发——半截 JSON 提前下发会被客户端判为非法工具参数。
-		if t.accumulateToolCalls(items) {
+		// index+arguments 片段。片段边收边以稳定槽位透传（客户端实时看到
+		// tool_use 增量，长回合不会静默到收尾）；完整调用在 Finalize 组装
+		// 进 TurnResult（非流式路径与 finish_reason 用）。
+		if fragments := t.accumulateToolCalls(items); len(fragments) > 0 {
+			deltas = append(deltas, Delta{ToolCalls: fragments})
 			t.sawOutput = true
 		}
 	}
 	return deltas
 }
 
-func (t *IDETranslator) accumulateToolCalls(items []any) bool {
-	saw := false
+func (t *IDETranslator) accumulateToolCalls(items []any) []ToolCall {
+	var fragments []ToolCall
 	for _, item := range items {
 		entry, ok := item.(map[string]any)
 		if !ok {
@@ -537,6 +541,10 @@ func (t *IDETranslator) accumulateToolCalls(items []any) bool {
 		}
 		id, _ := entry["id"].(string)
 		name, _ := fn["name"].(string)
+		frag := normalizeToolArguments(fn["arguments"])
+		if id == "" && name == "" && frag == "" {
+			continue
+		}
 		acc := t.resolveToolAccumulator(entry, id, name)
 		if acc == nil {
 			continue
@@ -547,12 +555,15 @@ func (t *IDETranslator) accumulateToolCalls(items []any) bool {
 		if name != "" {
 			acc.name = name
 		}
-		if frag := normalizeToolArguments(fn["arguments"]); frag != "" {
+		if frag != "" {
 			acc.args.WriteString(frag)
 		}
-		saw = true
+		slot := acc.slot
+		fragments = append(fragments, ToolCall{
+			ID: id, Name: name, Arguments: frag, Index: &slot,
+		})
 	}
-	return saw
+	return fragments
 }
 
 // resolveToolAccumulator 归属分片：index 优先（OpenAI 惯例），无 index 按
@@ -572,13 +583,13 @@ func (t *IDETranslator) resolveToolAccumulator(entry map[string]any, id, name st
 		if t.toolAccByID == nil {
 			t.toolAccByID = make(map[string]*ideToolAccumulator)
 		}
+		t.registerToolAcc(acc)
 		t.toolAccByID[id] = acc
-		t.toolAccSeq = append(t.toolAccSeq, acc)
 		return acc
 	}
 	if name != "" {
 		acc := &ideToolAccumulator{name: name}
-		t.toolAccSeq = append(t.toolAccSeq, acc)
+		t.registerToolAcc(acc)
 		return acc
 	}
 	return nil
@@ -592,9 +603,14 @@ func (t *IDETranslator) toolAccSlot(index int) *ideToolAccumulator {
 	if t.toolAcc == nil {
 		t.toolAcc = make(map[int]*ideToolAccumulator)
 	}
+	t.registerToolAcc(acc)
 	t.toolAcc[index] = acc
-	t.toolAccSeq = append(t.toolAccSeq, acc)
 	return acc
+}
+
+func (t *IDETranslator) registerToolAcc(acc *ideToolAccumulator) {
+	acc.slot = len(t.toolAccSeq)
+	t.toolAccSeq = append(t.toolAccSeq, acc)
 }
 
 func (t *IDETranslator) assembleToolCalls() []ToolCall {
@@ -643,11 +659,8 @@ func (t *IDETranslator) Finalize(streamEndedWithoutDone bool) (*TurnResult, []De
 		Err:           t.upstreamErr,
 		ToolCalls:     t.toolCalls,
 	}
-	if len(t.toolCalls) == 0 {
-		return &t.result, nil
-	}
-	// 工具调用在流中累积、收尾才完整：作为尾部增量交给流式管线下发。
-	return &t.result, []Delta{{ToolCalls: t.toolCalls}}
+	// 工具片段已随 ProcessEvent 增量下发（下游按 index 拼接），收尾无尾增。
+	return &t.result, nil
 }
 
 // MapIDEUsage 解析 llm_utils_chat 的扁平 token_usage（键名兼容

@@ -119,11 +119,14 @@ func SerializeAssistantToolCalls(raw json.RawMessage) string {
 	return "Client tool history (already handled; do not repeat):\n" + string(payload)
 }
 
-// ToolCall 是扫描出的单次调用（id 由本端分配）。
+// ToolCall 是扫描出的单次调用（id 由本端分配）。Index 非空时为增量
+// 片段在整条流中的稳定槽位（IDE 分片透传用，下游按它拼接；Remote 文本
+// 桥的完整调用不带）。
 type ToolCall struct {
 	ID        string
 	Name      string
 	Arguments string
+	Index     *int
 }
 
 // ToolCallScanner 是有状态的正文流扫描器：透传标记外的文本，缓冲可能是

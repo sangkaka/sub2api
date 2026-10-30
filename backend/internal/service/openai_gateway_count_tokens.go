@@ -280,7 +280,10 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 	// 高频调用此端点，本地 tiktoken 估算是与 Grok 一致的既有方案。
 	// BPS-only 账号同样本地估算：该入口按 Messages 标记不会调度到 BPS 账号，
 	// 这里是兜底，保证 Excel token 不会发往原生 input_tokens 端点。
-	if account.IsMultiProtocolAPIKey() || account.IsBPSOAuth() {
+	// TRAE 账号同理（2026-10 生产实测）：上游 llm_utils_chat/Remote 均无
+	// count_tokens 端点，掉进 OpenAI OAuth token 路径只会 502
+	// "not an openai oauth account"，Claude Code 高频调用受扰。
+	if account.IsMultiProtocolAPIKey() || account.IsBPSOAuth() || account.Platform == PlatformTrae {
 		estimated, err := estimateAnthropicCountTokensLocally(body)
 		if err != nil {
 			writeAnthropicCountTokensError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")

@@ -585,3 +585,25 @@ func TestNativePoolSelectionUnchanged(t *testing.T) {
 		}
 	})
 }
+
+// TRAE 账号 count_tokens：上游 llm_utils_chat/Remote 均无该端点，必须本地
+// 估算。掉进 OpenAI OAuth token 路径会 502 "not an openai oauth account"
+// （生产 Claude Code 高频调用受扰，2026-10-30 实测）。
+func TestForwardCountTokensAsAnthropicTraeUsesLocalEstimate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"model":"kimi-k3.1-pro","messages":[{"role":"user","content":"hello world"}]}`)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", bytes.NewReader(body))
+	upstream := &httpUpstreamRecorder{}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+
+	account := &Account{ID: 47, Platform: PlatformTrae, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 5}
+
+	err := svc.ForwardCountTokensAsAnthropic(context.Background(), c, account, body, "kimi-k3.1-pro")
+
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Positive(t, gjson.Get(recorder.Body.String(), "input_tokens").Int())
+	require.Nil(t, upstream.lastReq, "不得向 TRAE 上游发请求")
+}
