@@ -688,3 +688,26 @@ func TestForwardTraeChatCompletionsIDEHostFallback(t *testing.T) {
 	require.Contains(t, rec2.Body.String(), "via gateway")
 	require.Equal(t, 2, gatewayHits)
 }
+
+// 账号级 force_remote_models 命中：GLM 直接走 Remote，IDE 端点零命中
+// （glm-5.3-flashx 在 IDE 快路径上空参数工具调用退化的运营开关）。
+func TestForwardTraeChatCompletionsForcedRemoteModels(t *testing.T) {
+	upstream := newTraeTestUpstream(t, traeStreamEvents())
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL, ModelGatewayHost: upstream.URL}
+	isolateTraeChannelPrefs(t)
+
+	account := newTraeTestAccount()
+	account.Credentials["force_remote_models"] = " GLM-5.3 , glm-5.3-flashx "
+
+	body, _ := json.Marshal(map[string]any{
+		"model":    "GLM-5.3",
+		"messages": []map[string]any{{"role": "user", "content": "hi"}},
+	})
+	c, rec := traeTestContext()
+	result, err := svc.forwardTraeChatCompletions(context.Background(), c, account, body, "GLM-5.3")
+	require.NoError(t, err)
+	require.Equal(t, traeUpstreamEndpoint, result.UpstreamEndpoint)
+	require.Contains(t, rec.Body.String(), "hello world")
+}

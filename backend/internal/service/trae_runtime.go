@@ -109,6 +109,7 @@ func (s *OpenAIGatewayService) forwardTraeChatCompletions(
 	// 能力，带这类载荷或已确认 IDE 不服务的模型（4001/4023 缓存）走 Remote。
 	mustRemote := len(trae.MediaQueryParts(toTraeMessages(chatReq.Messages))) > 0 ||
 		isTraeCredentialTrue(account, "max_mode") ||
+		isTraeForcedRemote(account, originalModel, upstreamModel) ||
 		s.traePrefersRemote(account.ID, upstreamModel)
 	if !mustRemote {
 		result, err := s.forwardTraeIDETurn(ctx, c, client, token, account, chatReq, originalModel, billingModel, upstreamModel, startTime)
@@ -941,6 +942,27 @@ func escapeJSONString(value string) string {
 		return value
 	}
 	return string(payload[1 : len(payload)-1])
+}
+
+// isTraeForcedRemote 判定账号级模型名单 force_remote_models（逗号分隔，
+// 同时匹配对外模型名与上游 config 名）：上游模型在 IDE 快路径上输出退化
+// （如 glm-5.3-flashx 的空参数工具调用）时，可按模型切回 Remote 稳定通道，
+// 无需发版。
+func isTraeForcedRemote(account *Account, originalModel, upstreamModel string) bool {
+	raw, _ := account.Credentials["force_remote_models"].(string)
+	if strings.TrimSpace(raw) == "" {
+		return false
+	}
+	for _, name := range strings.Split(raw, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if strings.EqualFold(name, originalModel) || strings.EqualFold(name, upstreamModel) {
+			return true
+		}
+	}
+	return false
 }
 
 // isTraeCredentialTrue 判定 credentials 布尔标记（容忍 "true"/true 两种存法）。
