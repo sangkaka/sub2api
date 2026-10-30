@@ -358,3 +358,40 @@ func TestIDETranslatorToolCallLegitArgumentsKeyKept(t *testing.T) {
 	require.Equal(t, `{"arguments":"just a plain string"}`, result.ToolCalls[0].Arguments)
 	require.Len(t, tail, 1, "扣住的原始字节必须补发（内容不变）")
 }
+
+// 单帧完整调用（name+参数同帧）：首个转发片段必须携带 id/name——下游据此
+// 宣布 tool_use 块，缺名会生成无名工具调用（客户端无法派发）。
+func TestIDETranslatorSingleFrameNameAndArgsForwarded(t *testing.T) {
+	tr := NewIDETranslator("m")
+	deltas := tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"index": 0, "id": "call_9",
+			"function_call": map[string]any{"name": "Bash", "arguments": `{"command":"ls"}`},
+		}},
+	}})
+	require.Len(t, deltas, 1)
+	call := deltas[0].ToolCalls[0]
+	require.Equal(t, "call_9", call.ID)
+	require.Equal(t, "Bash", call.Name)
+	require.Equal(t, `{"command":"ls"}`, call.Arguments)
+	result, tail := tr.Finalize(false)
+	require.Equal(t, "Bash", result.ToolCalls[0].Name)
+	require.Empty(t, tail)
+}
+
+// 单帧包装形状（name+被扣参数同帧）：收尾补发片段也必须携带 id/name。
+func TestIDETranslatorWrappedSingleFrameTailCarriesName(t *testing.T) {
+	tr := NewIDETranslator("m")
+	tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"index": 0, "id": "call_w",
+			"function_call": map[string]any{"name": "Bash", "arguments": `{"arguments": "{\"command\":\"ls\"}"}`},
+		}},
+	}})
+	_, tail := tr.Finalize(false)
+	require.Len(t, tail, 1)
+	call := tail[0].ToolCalls[0]
+	require.Equal(t, "call_w", call.ID)
+	require.Equal(t, "Bash", call.Name)
+	require.Equal(t, `{"command":"ls"}`, call.Arguments)
+}

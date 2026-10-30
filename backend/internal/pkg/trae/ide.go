@@ -648,12 +648,14 @@ func (t *IDETranslator) accumulateToolCalls(items []any) []ToolCall {
 				} else {
 					acc.wrapHoldState = ideWrapStreaming
 					slot := acc.slot
-					fragments = append(fragments, ToolCall{Index: &slot, Arguments: string(effective)})
+					// 首个片段必须带 id/name：单帧完整调用（glm 常见形状）
+					// 只有这一次下发机会，缺名下游会以空名宣布 tool_use。
+					fragments = append(fragments, ToolCall{ID: acc.id, Name: acc.name, Arguments: string(effective), Index: &slot})
 				}
 			} else if !bytes.HasPrefix(wrapperKeyPrefix, effective) {
 				acc.wrapHoldState = ideWrapStreaming
 				slot := acc.slot
-				fragments = append(fragments, ToolCall{Index: &slot, Arguments: string(effective)})
+				fragments = append(fragments, ToolCall{ID: acc.id, Name: acc.name, Arguments: string(effective), Index: &slot})
 			}
 			// effective 仍是 {"arguments" 的真前缀：继续攒，暂不下发。
 			continue
@@ -775,7 +777,11 @@ func (t *IDETranslator) Finalize(streamEndedWithoutDone bool) (*TurnResult, []De
 			continue
 		}
 		slot := acc.slot
+		// 首帧即完整参数且被扣住的调用，id/name 从未透传过：补发片段必须
+		// 带上，供下游宣布 tool_use 块。
 		tail = append(tail, Delta{ToolCalls: []ToolCall{{
+			ID:        acc.id,
+			Name:      acc.name,
 			Index:     &slot,
 			Arguments: acc.args.String(),
 		}}})
