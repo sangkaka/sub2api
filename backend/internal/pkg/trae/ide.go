@@ -479,7 +479,24 @@ type ideToolAccumulator struct {
 	name string
 	slot int
 	args strings.Builder
+	// wrapHoldState 控制 arguments 包装形状（模型模仿 function_call 信封
+	// 产生 {"arguments":"<JSON 字符串>"}，可叠两层字符串）的处理：
+	// undecided 在 wrapperKeyPrefix 长度的探测窗口内攒前缀；命中转 held
+	// （片段只入账不下发，Finalize 拆包后一次性补发），不命中转 streaming
+	// （探测期攒下的字节原样下发，行为与直通一致）。
+	wrapHoldState int
+	probe         []byte
+	owesBytes     bool
 }
+
+const (
+	ideWrapUndecided = iota
+	ideWrapHeld
+	ideWrapStreaming
+)
+
+// wrapperKeyPrefix 是包装形状的起始指纹（模型输出为紧凑 JSON）。
+var wrapperKeyPrefix = []byte(`{"arguments"`)
 
 // NewIDETranslator 创建翻译器；model 是对外回显的模型名。
 func NewIDETranslator(model string) *IDETranslator {
@@ -613,8 +630,37 @@ func (t *IDETranslator) accumulateToolCalls(items []any) []ToolCall {
 		if name != "" {
 			acc.name = name
 		}
-		if frag != "" {
-			acc.args.WriteString(frag)
+		if frag == "" && acc.wrapHoldState != ideWrapHeld {
+			// 首帧常带空 arguments：照常透传（空串会在下游被跳过），
+			// 不推进探测窗口。
+			slot := acc.slot
+			fragments = append(fragments, ToolCall{ID: id, Name: name, Arguments: "", Index: &slot})
+			continue
+		}
+		acc.args.WriteString(frag)
+		if acc.wrapHoldState == ideWrapUndecided {
+			acc.probe = append(acc.probe, frag...)
+			effective := bytes.TrimLeft(acc.probe, " \t\r\n")
+			if len(effective) >= len(wrapperKeyPrefix) {
+				if bytes.HasPrefix(effective, wrapperKeyPrefix) {
+					acc.wrapHoldState = ideWrapHeld
+					acc.owesBytes = true
+				} else {
+					acc.wrapHoldState = ideWrapStreaming
+					slot := acc.slot
+					fragments = append(fragments, ToolCall{Index: &slot, Arguments: string(effective)})
+				}
+			} else if !bytes.HasPrefix(wrapperKeyPrefix, effective) {
+				acc.wrapHoldState = ideWrapStreaming
+				slot := acc.slot
+				fragments = append(fragments, ToolCall{Index: &slot, Arguments: string(effective)})
+			}
+			// effective 仍是 {"arguments" 的真前缀：继续攒，暂不下发。
+			continue
+		}
+		if acc.wrapHoldState == ideWrapHeld {
+			acc.owesBytes = true
+			continue
 		}
 		slot := acc.slot
 		fragments = append(fragments, ToolCall{
@@ -680,6 +726,10 @@ func (t *IDETranslator) assembleToolCalls() []ToolCall {
 		if acc.name == "" {
 			continue
 		}
+		if repaired := repairWrappedToolArguments(acc.args.String()); repaired != acc.args.String() {
+			acc.args.Reset()
+			acc.args.WriteString(repaired)
+		}
 		id := acc.id
 		if id == "" {
 			id = fmt.Sprintf("idecall_%d", t.callSeq)
@@ -717,8 +767,60 @@ func (t *IDETranslator) Finalize(streamEndedWithoutDone bool) (*TurnResult, []De
 		Err:           t.upstreamErr,
 		ToolCalls:     t.toolCalls,
 	}
-	// 工具片段已随 ProcessEvent 增量下发（下游按 index 拼接），收尾无尾增。
-	return &t.result, nil
+	// 包装形状被扣住的调用：拆包（assembleToolCalls 已改写 acc.args）后
+	// 一次性补发完整参数；未能拆包的原样补发，保证不丢字节。
+	var tail []Delta
+	for _, acc := range t.toolAccSeq {
+		if acc.name == "" || !acc.owesBytes {
+			continue
+		}
+		slot := acc.slot
+		tail = append(tail, Delta{ToolCalls: []ToolCall{{
+			Index:     &slot,
+			Arguments: acc.args.String(),
+		}}})
+		acc.owesBytes = false
+	}
+	return &t.result, tail
+}
+
+// repairWrappedToolArguments 拆掉模型模仿 function_call 信封产生的
+// {"arguments":"<JSON 字符串>"} 包装：单键 arguments、值为字符串（可叠
+// 1~2 层 JSON 字符串转义）、最内层为 JSON 对象时取最内层对象；其它形状
+// 原样返回（含真实以 arguments 为参数的工具）。
+func repairWrappedToolArguments(raw string) string {
+	body := strings.TrimSpace(raw)
+	if !bytes.HasPrefix([]byte(body), wrapperKeyPrefix) {
+		return raw
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &obj); err != nil || len(obj) != 1 {
+		return raw
+	}
+	val, ok := obj["arguments"]
+	if !ok {
+		return raw
+	}
+	for i := 0; i < 3; i++ {
+		var s string
+		if json.Unmarshal(val, &s) != nil {
+			break
+		}
+		inner := json.RawMessage(strings.TrimSpace(s))
+		var probe any
+		if json.Unmarshal(inner, &probe) != nil {
+			return raw
+		}
+		val = inner
+	}
+	var final any
+	if json.Unmarshal(val, &final) != nil {
+		return raw
+	}
+	if _, isObject := final.(map[string]any); !isObject {
+		return raw
+	}
+	return string(val)
 }
 
 // MapIDEUsage 解析 llm_utils_chat 的扁平 token_usage（键名兼容

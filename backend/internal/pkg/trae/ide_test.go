@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -271,4 +272,89 @@ func TestNormalizeIDEToolChoice(t *testing.T) {
 	require.Nil(t, NormalizeIDEToolChoice(nil))
 	require.Nil(t, NormalizeIDEToolChoice(json.RawMessage(``)))
 	require.Nil(t, NormalizeIDEToolChoice(json.RawMessage(`null`)))
+}
+
+// 模型模仿 function_call 信封输出 {"arguments":"<JSON 字符串>"}（可叠两层
+// 转义）：片段必须被扣住不下发，Finalize 拆包后一次性补发最内层对象。
+func TestIDETranslatorToolCallWrappedArgumentsRepaired(t *testing.T) {
+	cases := []struct {
+		name string
+		frag []string
+		want string
+	}{
+		{"single-wrap", []string{`{"arguments": ` + strconv.Quote(`{"command":"ls -la"}`) + `}`}, `{"command":"ls -la"}`},
+		{"double-wrap", []string{`{"arguments": ` + strconv.Quote(strconv.Quote(`{"command": "sed -n 1p f"}`)) + `}`}, `{"command": "sed -n 1p f"}`},
+		{"split-prefix", []string{`{"arg`, `uments": ` + strconv.Quote(`{"command":"git status"}`) + `}`}, `{"command":"git status"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := NewIDETranslator("m")
+			var streamed []string
+			for _, frag := range tc.frag {
+				for _, d := range tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+					"tool_calls": []any{map[string]any{
+						"index":         0,
+						"id":            "call_1",
+						"function_call": map[string]any{"name": "Bash", "arguments": frag},
+					}},
+				}}) {
+					for _, c := range d.ToolCalls {
+						if c.Arguments != "" {
+							streamed = append(streamed, c.Arguments)
+						}
+					}
+				}
+			}
+			require.Empty(t, streamed, "包装形状片段不得增量下发（客户端无法收回）")
+			result, tail := tr.Finalize(false)
+			require.Len(t, result.ToolCalls, 1)
+			require.Equal(t, "Bash", result.ToolCalls[0].Name)
+			require.Equal(t, tc.want, result.ToolCalls[0].Arguments)
+			require.NotEmpty(t, tail, "扣住的字节必须在收尾补发")
+			var forwarded string
+			for _, d := range tail {
+				for _, c := range d.ToolCalls {
+					forwarded += c.Arguments
+				}
+			}
+			require.Equal(t, tc.want, forwarded)
+		})
+	}
+}
+
+// 正常参数不被误扣：前缀不匹配立即转直通，行为与无检测时一致。
+func TestIDETranslatorToolCallNormalArgumentsStreamThrough(t *testing.T) {
+	tr := NewIDETranslator("m")
+	frag1 := tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"index": 0, "id": "call_1",
+			"function_call": map[string]any{"name": "Bash", "arguments": "{\"command\":"},
+		}},
+	}})
+	require.Len(t, frag1, 1)
+	require.Equal(t, `{"command":`, frag1[0].ToolCalls[0].Arguments)
+	frag2 := tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"index":         0,
+			"function_call": map[string]any{"arguments": "\"ls\"}"},
+		}},
+	}})
+	require.Equal(t, `"ls"}`, frag2[0].ToolCalls[0].Arguments)
+	result, tail := tr.Finalize(false)
+	require.Equal(t, `{"command":"ls"}`, result.ToolCalls[0].Arguments)
+	require.Empty(t, tail, "直通调用收尾无尾增")
+}
+
+// 单键 arguments 但内容非 JSON 字符串/非对象：不是包装形状，原样保留。
+func TestIDETranslatorToolCallLegitArgumentsKeyKept(t *testing.T) {
+	tr := NewIDETranslator("m")
+	tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"index": 0, "id": "call_1",
+			"function_call": map[string]any{"name": "Run", "arguments": `{"arguments":"just a plain string"}`},
+		}},
+	}})
+	result, tail := tr.Finalize(false)
+	require.Equal(t, `{"arguments":"just a plain string"}`, result.ToolCalls[0].Arguments)
+	require.Len(t, tail, 1, "扣住的原始字节必须补发（内容不变）")
 }
