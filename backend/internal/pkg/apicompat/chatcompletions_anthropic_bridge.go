@@ -579,6 +579,14 @@ type ChatCompletionsToAnthropicStreamState struct {
 	pendingToolCallID map[int]string
 	pendingToolArgs   map[int]string
 
+	// Non-tool (thinking/text) deltas that arrive while a tool_use block is
+	// streaming. OpenAI-style upstreams interleave reasoning chunks with tool
+	// argument fragments, but Anthropic content blocks are strictly sequential:
+	// opening a thinking/text block mid-tool would close the tool block and
+	// orphan every argument fragment after it. Buffer them instead and flush
+	// as trailing blocks at finalize.
+	deferredNonTool []deferredNonToolDelta
+
 	// Reasoning (DeepSeek-style): reasoning_content streamed before content.
 	// No separate reasoning block index — it uses ContentBlockIndex like the
 	// Responses bridge's ReasoningIndex, but since blocks are sequential we
@@ -594,6 +602,13 @@ type ChatCompletionsToAnthropicStreamState struct {
 	ResponseID string
 	Model      string
 	Created    int64
+}
+
+// deferredNonToolDelta is one buffered thinking/text chunk held back while a
+// tool_use block was streaming.
+type deferredNonToolDelta struct {
+	thinking bool
+	text     string
 }
 
 // NewChatCompletionsToAnthropicStreamState returns an initialized stream state.
@@ -640,24 +655,34 @@ func ChatCompletionsChunkToAnthropicEvents(
 	events = append(events, ensureCCAnthropicMessageStart(state)...)
 
 	for _, choice := range chunk.Choices {
-		// Reasoning content → thinking block.
+		// Reasoning content → thinking block. Deferred while a tool block is
+		// streaming so interleaved reasoning cannot orphan tool arguments.
 		reasoning := choice.Delta.reasoningText()
 		if reasoning != nil && *reasoning != "" {
-			events = append(events, ensureCCAnthropicThinkingBlock(state)...)
-			events = append(events, ccAnthropicDelta(state, &AnthropicDelta{
-				Type:     "thinking_delta",
-				Thinking: *reasoning,
-			})...)
+			if state.ContentBlockOpen && state.CurrentBlockType == "tool_use" {
+				state.deferredNonTool = append(state.deferredNonTool, deferredNonToolDelta{thinking: true, text: *reasoning})
+			} else {
+				events = append(events, ensureCCAnthropicThinkingBlock(state)...)
+				events = append(events, ccAnthropicDelta(state, &AnthropicDelta{
+					Type:     "thinking_delta",
+					Thinking: *reasoning,
+				})...)
+			}
 		}
 
 		// Text content → text block (closes any open thinking block first).
+		// Deferred while a tool block is streaming, same as reasoning.
 		if choice.Delta.Content != nil && *choice.Delta.Content != "" {
-			events = append(events, closeCCAnthropicBlockIfOpen(state, "thinking")...)
-			events = append(events, ensureCCAnthropicTextBlock(state)...)
-			events = append(events, ccAnthropicDelta(state, &AnthropicDelta{
-				Type: "text_delta",
-				Text: *choice.Delta.Content,
-			})...)
+			if state.ContentBlockOpen && state.CurrentBlockType == "tool_use" {
+				state.deferredNonTool = append(state.deferredNonTool, deferredNonToolDelta{thinking: false, text: *choice.Delta.Content})
+			} else {
+				events = append(events, closeCCAnthropicBlockIfOpen(state, "thinking")...)
+				events = append(events, ensureCCAnthropicTextBlock(state)...)
+				events = append(events, ccAnthropicDelta(state, &AnthropicDelta{
+					Type: "text_delta",
+					Text: *choice.Delta.Content,
+				})...)
+			}
 		}
 
 		// Tool calls → tool_use blocks.
@@ -704,6 +729,7 @@ func FinalizeChatCompletionsAnthropicStream(state *ChatCompletionsToAnthropicStr
 	}
 
 	events = append(events, closeCCAnthropicBlock(state)...)
+	events = append(events, flushDeferredNonToolBlocks(state)...)
 
 	stopReason := ccFinishReasonToAnthropicStopReason(state.FinishReason, state.HasToolCall)
 
@@ -723,6 +749,36 @@ func FinalizeChatCompletionsAnthropicStream(state *ChatCompletionsToAnthropicStr
 		AnthropicStreamEvent{Type: "message_stop"},
 	)
 	state.MessageStopSent = true
+	return events
+}
+
+// flushDeferredNonToolBlocks emits buffered thinking/text chunks as trailing
+// blocks once no tool block is streaming anymore. Adjacent chunks of the same
+// kind share one block; kind switches close and reopen.
+func flushDeferredNonToolBlocks(state *ChatCompletionsToAnthropicStreamState) []AnthropicStreamEvent {
+	if len(state.deferredNonTool) == 0 {
+		return nil
+	}
+	deferred := state.deferredNonTool
+	state.deferredNonTool = nil
+
+	var events []AnthropicStreamEvent
+	for _, d := range deferred {
+		if d.thinking {
+			events = append(events, ensureCCAnthropicThinkingBlock(state)...)
+			events = append(events, ccAnthropicDelta(state, &AnthropicDelta{
+				Type:     "thinking_delta",
+				Thinking: d.text,
+			})...)
+		} else {
+			events = append(events, ensureCCAnthropicTextBlock(state)...)
+			events = append(events, ccAnthropicDelta(state, &AnthropicDelta{
+				Type: "text_delta",
+				Text: d.text,
+			})...)
+		}
+	}
+	events = append(events, closeCCAnthropicBlock(state)...)
 	return events
 }
 

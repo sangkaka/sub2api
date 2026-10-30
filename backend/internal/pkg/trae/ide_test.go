@@ -261,3 +261,14 @@ func TestIDETranslatorFallbackError(t *testing.T) {
 	tr2.ProcessEvent(Event{Name: "output", Data: map[string]any{"response": "hi"}})
 	require.Nil(t, tr2.FallbackError(Event{Name: "error", Data: map[string]any{"code": 4023, "message": "late"}}), "已有输出不得回落")
 }
+
+// 上游 llm_utils_chat 的 tool_choice 是纯字符串；对象形态必须降级，否则 400。
+func TestNormalizeIDEToolChoice(t *testing.T) {
+	require.Equal(t, "auto", NormalizeIDEToolChoice(json.RawMessage(`"auto"`)))
+	require.Equal(t, "none", NormalizeIDEToolChoice(json.RawMessage(`"none"`)))
+	require.Equal(t, "auto", NormalizeIDEToolChoice(json.RawMessage(`{"type":"function","function":{"name":"Bash"}}`)))
+	require.Equal(t, "auto", NormalizeIDEToolChoice(json.RawMessage(`{"type":"any"}`)))
+	require.Nil(t, NormalizeIDEToolChoice(nil))
+	require.Nil(t, NormalizeIDEToolChoice(json.RawMessage(``)))
+	require.Nil(t, NormalizeIDEToolChoice(json.RawMessage(`null`)))
+}

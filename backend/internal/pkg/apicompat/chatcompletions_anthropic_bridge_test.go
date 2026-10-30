@@ -565,6 +565,61 @@ func TestChatCompletionsChunkToAnthropicEvents_ReasoningThenContent(t *testing.T
 	require.Equal(t, []string{"thinking", "text"}, blockTypes)
 }
 
+// Interleaved reasoning between tool fragments must not close the tool block:
+// the tool arguments still stream on the tool block, and the reasoning is
+// delivered as a trailing thinking block at finalize. Regression: closing the
+// tool block mid-stream orphaned every later argument fragment, leaving CC
+// with tool_use input={} ("required parameter missing").
+func TestChatCompletionsChunkToAnthropicEvents_ReasoningInterleavedWithToolFragments(t *testing.T) {
+	events := collectAnthropicStreamEvents(t, []string{
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":""}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"reasoning_content":"let me check the city"}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"SF\"}"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`,
+	})
+
+	// Tool block announces first, both argument fragments land on the open
+	// tool block (before its stop), thinking is flushed after as its own block.
+	var toolArgs, thinkingText string
+	var toolBlockStops, toolDeltas int
+	toolBlockIdx := -1
+	stopped := map[int]bool{}
+	for _, e := range events {
+		switch e.Type {
+		case "content_block_start":
+			if e.ContentBlock != nil && e.ContentBlock.Type == "tool_use" {
+				toolBlockIdx = *e.Index
+			}
+		case "content_block_delta":
+			if e.Delta == nil {
+				continue
+			}
+			switch e.Delta.Type {
+			case "input_json_delta":
+				if stopped[*e.Index] {
+					t.Fatalf("input_json_delta on stopped block %d", *e.Index)
+				}
+				if *e.Index == toolBlockIdx {
+					toolArgs += e.Delta.PartialJSON
+					toolDeltas++
+				}
+			case "thinking_delta":
+				thinkingText += e.Delta.Thinking
+			}
+		case "content_block_stop":
+			stopped[*e.Index] = true
+			if *e.Index == toolBlockIdx {
+				toolBlockStops++
+			}
+		}
+	}
+	require.Equal(t, 2, toolDeltas, "both argument fragments must reach the tool block")
+	require.Equal(t, `{"city":"SF"}`, toolArgs)
+	require.Equal(t, 1, toolBlockStops, "tool block closed exactly once")
+	require.Equal(t, "let me check the city", thinkingText, "interleaved reasoning must survive as a trailing block")
+}
+
 func TestChatCompletionsChunkToAnthropicEvents_ToolCallAggregation(t *testing.T) {
 	events := collectAnthropicStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":""}}]}}]}`,

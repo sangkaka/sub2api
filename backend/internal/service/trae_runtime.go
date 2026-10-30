@@ -235,7 +235,7 @@ func (s *OpenAIGatewayService) forwardTraeIDETurn(
 		UserID:            account.GetCredential("user_id"),
 		MaxTokens:         maxTokens,
 		Tools:             toTraeToolDefinitions(chatReq.Tools),
-		ToolChoice:        json.RawMessage(chatReq.ToolChoice),
+		ToolChoice:        trae.NormalizeIDEToolChoice(chatReq.ToolChoice),
 		ParallelToolCalls: chatReq.ParallelToolCalls,
 	}
 	var lastErr error

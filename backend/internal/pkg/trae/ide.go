@@ -777,3 +777,21 @@ func normalizeToolArguments(raw any) string {
 		return ""
 	}
 }
+
+// NormalizeIDEToolChoice 归一化 tool_choice：上游 llm_utils_chat 的字段是
+// 纯字符串，对象形态（OpenAI 指定工具/any）会直接 400。字符串透传，对象
+// 降级为 "auto"（上游不支持按名强制），空值返回 nil（不下发该键）。
+func NormalizeIDEToolChoice(raw json.RawMessage) any {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return "auto"
+}
