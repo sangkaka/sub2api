@@ -703,12 +703,21 @@ func (s *OpenAIGatewayService) traeClientForAccount(ctx context.Context, account
 func toTraeMessages(messages []apicompat.ChatMessage) []trae.ChatMessage {
 	out := make([]trae.ChatMessage, 0, len(messages))
 	for _, m := range messages {
-		out = append(out, trae.ChatMessage{
+		wire := trae.ChatMessage{
 			Role:       m.Role,
 			Content:    m.Content,
 			ToolCallID: m.ToolCallID,
 			Name:       m.Name,
-		})
+		}
+		// assistant 的历史 tool_calls 必须透传：丢了它，后续 tool 结果消息
+		// 引用的 tool_call_id 在上游找不到对应调用 → 业务码 4027
+		// "tool_call_id is not found"（CC 多轮工具会话实测）。
+		if len(m.ToolCalls) > 0 {
+			if encoded, err := json.Marshal(m.ToolCalls); err == nil {
+				wire.ToolCalls = encoded
+			}
+		}
+		out = append(out, wire)
 	}
 	return out
 }
