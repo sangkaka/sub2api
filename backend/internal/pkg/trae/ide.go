@@ -187,8 +187,9 @@ func ideToolDefinitions(tools []ToolDefinition) []map[string]any {
 }
 
 // toIDEWireMessages 把 OpenAI 形消息转换为 llm_utils_chat 的结构化消息：
-// 文本进 content blocks；assistant.tool_calls 原样透传（上游接受 OpenAI
-// 形状）；tool 结果保留 tool_call_id/name 关联。
+// 文本进 content blocks；assistant.tool_calls 转为上游 FunctionCall 形状
+// （键名 function_call 而非 function，OpenAI 键会让上游 RPC 报 2001
+// "required field Name is not set"）；tool 结果保留 tool_call_id/name 关联。
 func toIDEWireMessages(messages []ChatMessage) []ideWireMessage {
 	out := make([]ideWireMessage, 0, len(messages))
 	for _, message := range messages {
@@ -204,7 +205,7 @@ func toIDEWireMessages(messages []ChatMessage) []ideWireMessage {
 		}
 		item := ideWireMessage{
 			Role:       role,
-			ToolCalls:  message.ToolCalls,
+			ToolCalls:  ideWireToolCalls(message.ToolCalls),
 			ToolCallID: message.ToolCallID,
 			Name:       message.Name,
 		}
@@ -214,6 +215,56 @@ func toIDEWireMessages(messages []ChatMessage) []ideWireMessage {
 		out = append(out, item)
 	}
 	return out
+}
+
+// ideWireToolCalls 把 OpenAI 形 tool_calls（function 键）转换为上游
+// LLMRawMessage.ToolCalls 形状：function_call 键 + arguments 字符串化。
+func ideWireToolCalls(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	var calls []struct {
+		Index    *int   `json:"index"`
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		Function struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		} `json:"function"`
+	}
+	if err := json.Unmarshal(raw, &calls); err != nil || len(calls) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(calls))
+	for _, call := range calls {
+		if call.Function.Name == "" {
+			continue
+		}
+		entry := map[string]any{
+			"function_call": map[string]any{
+				"name":      call.Function.Name,
+				"arguments": normalizeToolArguments(call.Function.Arguments),
+			},
+		}
+		if call.ID != "" {
+			entry["id"] = call.ID
+		}
+		if call.Index != nil {
+			entry["index"] = *call.Index
+		}
+		if call.Type != "" {
+			entry["type"] = call.Type
+		}
+		out = append(out, entry)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		return nil
+	}
+	return encoded
 }
 
 // contentText 从 OpenAI 形 content（字符串或 blocks 数组）提取文本。

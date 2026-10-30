@@ -187,6 +187,21 @@ func TestForwardAnthropicViaTraeToolHistoryWire(t *testing.T) {
 	require.NotEmpty(t, assistantCalls, "assistant 历史 tool_calls 必须到达上游")
 	require.Equal(t, []string{"toolu_01"}, toolIDs)
 	require.Equal(t, toolIDs, assistantCalls, "tool 结果的 tool_call_id 必须与 assistant tool_calls 配对")
+	// 上游 FunctionCall 形状：function_call 键 + name 必须存在（OpenAI 的
+	// function 键会致 2001 "required field Name is not set"）。
+	for _, raw := range messages {
+		item := raw.(map[string]any)
+		if item["role"] != "assistant" {
+			continue
+		}
+		for _, callRaw := range item["tool_calls"].([]any) {
+			call := callRaw.(map[string]any)
+			fn, ok := call["function_call"].(map[string]any)
+			require.True(t, ok, "历史 tool_calls 必须用 function_call 键")
+			require.Equal(t, "read_file", fn["name"])
+			require.IsType(t, "", fn["arguments"])
+		}
+	}
 }
 
 func setupToolHistoryUpstream(t *testing.T, ideBody *map[string]any) *http.ServeMux {
