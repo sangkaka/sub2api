@@ -380,8 +380,8 @@ func startTestServer(t *testing.T, mux *http.ServeMux) *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-// 图片拒绝（/v1/messages 入站，2026-10-30）：Anthropic 形 400 必须在
-// interposer 包 writer 之前写出；运营开关 allow_remote_images 打开时不拒。
+// 图片白名单（/v1/messages 入站，2026-10-31）：Anthropic 形 400 必须在
+// interposer 包 writer 之前写出；账号凭据 ide_image_models 命中的模型不在此层拒绝。
 func TestForwardAnthropicViaTraeImageRejected(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
@@ -407,8 +407,8 @@ func TestForwardAnthropicViaTraeImageRejected(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"type":"error"`)
 
 	acct := newTraeTestAccount()
-	acct.Credentials["allow_remote_images"] = true
+	acct.Credentials["ide_image_models"] = "GLM-5.3"
 	c2, rec2 := traeTestContext()
 	_, _ = svc.forwardAnthropicViaTrae(context.Background(), c2, acct, []byte(imgBody), "GLM-5.3")
-	require.NotContains(t, rec2.Body.String(), "image inputs are not supported", "开关打开时不在此层拒绝")
+	require.NotContains(t, rec2.Body.String(), "image inputs are not supported", "名单命中时不在此层拒绝")
 }

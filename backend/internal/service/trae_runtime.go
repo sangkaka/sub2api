@@ -106,21 +106,21 @@ func (s *OpenAIGatewayService) forwardTraeChatCompletions(
 	client := s.traeClientForAccount(ctx, account)
 	// IDE 优先路由：llm_utils_chat 是裸 LLM 端点（无 Remote 会话的 agent
 	// 脚手架——沙箱/规划/每请求 ~23.5K 系统注入，琐碎问题实测 20~41s vs
-	// IDE 2~4s），且提示缓存只在 IDE 生效。图片附件与 1M Max 是 Remote 侧
-	// 能力，带这类载荷或已确认 IDE 不服务的模型（4001/4023 缓存）走 Remote。
+	// IDE 2~4s），且提示缓存只在 IDE 生效。1M Max 与已确认 IDE 不服务的
+	// 模型（4001/4023 缓存）走 Remote。
+	//
+	// 图片（2026-10-31 重定性）：Remote 的 renderer media parts 形状上游
+	// 不收（param is invalid），沙箱幻觉带毒 200；正确路径是 IDE/v2 线的
+	// OpenAI 形 image_url 对象块（v2 通道多模态模型实证真读到图）。带图
+	// 请求只对账号凭据 ide_image_models 名单内的模型放行透传，名单外干净
+	// 400——非多模态模型放行只会把 base64 当文本烧上下文。
 	hasMediaParts := len(trae.MediaQueryParts(toTraeMessages(chatReq.Messages))) > 0
-	if hasMediaParts && !isTraeCredentialTrue(account, "allow_remote_images") {
-		// 2026-10-30 实测（deepseek/glm/kimi 三模型同测）：Remote 会话对带图
-		// 请求回 200，但 renderer media parts 并未让模型读到图片——沙箱里
-		// /workspace/.uploads 为空，模型自信回答「没有收到图片」。带毒 200
-		// 比干净 400 更糟，默认整体拒绝；上游修复后按账号打开
-		// credentials.allow_remote_images 即可恢复透传，无需发版。
+	if hasMediaParts && !isTraeImageModel(account, originalModel, upstreamModel) {
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error",
-			"image inputs are not supported on the trAE upstream for model "+originalModel+": the upstream session does not deliver image attachments to the model; remove image blocks or use a vision-capable model")
+			"image inputs are not supported for model "+originalModel+" on the trAE upstream: only models enabled via ide_image_models (verified multimodal) accept images; remove image blocks or switch to an enabled model")
 		return nil, errors.New("trAE upstream does not support image inputs (model " + originalModel + ")")
 	}
-	mustRemote := hasMediaParts ||
-		isTraeCredentialTrue(account, "max_mode") ||
+	mustRemote := isTraeCredentialTrue(account, "max_mode") ||
 		isTraeForcedRemote(account, originalModel, upstreamModel) ||
 		s.traePrefersRemote(account.ID, upstreamModel)
 	if !mustRemote {
@@ -1101,6 +1101,28 @@ func (m *traeV2BindingCache) put(accountID int64, bindings map[string]trae.V2Mod
 // 的模型走 llm_raw_chat v2 通道（新栈原生函数调用，长参数可靠）。
 func isTraeV2Model(account *Account, originalModel, upstreamModel string) bool {
 	raw, _ := account.Credentials["ide_v2_models"].(string)
+	if strings.TrimSpace(raw) == "" {
+		return false
+	}
+	for _, name := range strings.Split(raw, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if strings.EqualFold(name, originalModel) || strings.EqualFold(name, upstreamModel) {
+			return true
+		}
+	}
+	return false
+}
+
+// isTraeImageModel 判定账号级名单 ide_image_models（csv，键不区分大小写）：
+// 命中的模型带图请求走 IDE/v2 线透传 OpenAI 形 image_url 块。名单只配实证
+// 多模态的模型（2026-10-31 v2 探测：doubao 全系 / minimax-m3 / qwen3.8-max
+// 真读到图；glm 系 / deepseek / minimax-m2.7 看不到）。命名风格沿用
+// ide_v2_models，运营按模型渐进放量。
+func isTraeImageModel(account *Account, originalModel, upstreamModel string) bool {
+	raw, _ := account.Credentials["ide_image_models"].(string)
 	if strings.TrimSpace(raw) == "" {
 		return false
 	}

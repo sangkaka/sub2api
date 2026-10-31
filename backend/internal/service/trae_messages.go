@@ -58,14 +58,14 @@ func (s *OpenAIGatewayService) forwardAnthropicViaTrae(
 		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return nil, fmt.Errorf("missing model in request")
 	}
-	// 图片拒绝必须先于 interposer 包 writer：runtime 层写出的 OpenAI 形错误体
-	// 会被拦截 writer 吞掉（见下方错误路径注释），只有这里的 Anthropic 形 400
-	// 能原样到达 /v1/messages 客户端。runtime 层的同类拒绝保留，作
-	// /v1/chat/completions 入口的防线。
-	if anthropicBodyHasImageBlocks(body) && !isTraeCredentialTrue(account, "allow_remote_images") {
+	// 图片白名单（2026-10-31 重定性）：IDE/v2 线透传 OpenAI 形 image_url
+	// 块、v2 多模态模型实证真读到图；名单外模型干净 400（非多模态放行只会
+	// 把 base64 当文本烧上下文）。必须先于 interposer 包 writer 写出
+	// Anthropic 形 400——runtime 层写出的 OpenAI 形错误体会被拦截 writer
+	// 吞掉（见下方错误路径注释）。
+	if anthropicBodyHasImageBlocks(body) && !isTraeImageModel(account, anthropicReq.Model, originalModel) {
 		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error",
-			"image inputs are not supported on the trAE upstream for model "+originalModel+
-				": the upstream session does not deliver image attachments to the model; remove image blocks or use a vision-capable model")
+			"image inputs are not supported for model "+originalModel+" on the trAE upstream: only models enabled via ide_image_models (verified multimodal) accept images; remove image blocks or switch to an enabled model")
 		return nil, fmt.Errorf("trAE upstream does not support image inputs (model %s)", originalModel)
 	}
 	applyOpenAICompatModelNormalization(&anthropicReq)

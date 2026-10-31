@@ -75,16 +75,26 @@ type IDEChatRequest struct {
 }
 
 type ideWireMessage struct {
-	Role       string          `json:"role"`
-	Content    []ideTextBlock  `json:"content,omitempty"`
-	ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
-	Name       string          `json:"name,omitempty"`
+	Role       string            `json:"role"`
+	Content    []ideContentBlock `json:"content,omitempty"`
+	ToolCalls  json.RawMessage   `json:"tool_calls,omitempty"`
+	ToolCallID string            `json:"tool_call_id,omitempty"`
+	Name       string            `json:"name,omitempty"`
 }
 
-type ideTextBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+// ideContentBlock 是 wire content 的通用块：text 或 image_url。上游
+// LLMRawMessageContent 的 image_url 必须是对象（LLMRawMessageImageUrl；
+// 2026-10-31 探测实证：OpenAI 形对象块被 IDE/v2 接受，v2 通道多模态模型
+// 真读到图；renderer 形 data:{mimeType,data} 报 param is invalid——旧
+// PR-3.2 Remote 图片路径坏掉的根因即在此形状）。
+type ideContentBlock struct {
+	Type     string       `json:"type"`
+	Text     string       `json:"text,omitempty"`
+	ImageURL *ideImageURL `json:"image_url,omitempty"`
+}
+
+type ideImageURL struct {
+	URL string `json:"url"`
 }
 
 // IDEChat 发起一次 llm_utils_chat 回合并返回归一化事件流。生命周期与
@@ -223,12 +233,91 @@ func toIDEWireMessages(messages []ChatMessage) []ideWireMessage {
 			ToolCallID: message.ToolCallID,
 			Name:       message.Name,
 		}
-		if text := contentText(message.Content); text != "" || (item.ToolCalls == nil && item.ToolCallID == "") {
-			item.Content = []ideTextBlock{{Type: "text", Text: text}}
+		if blocks := ideContentBlocks(message.Content); len(blocks) > 0 || (item.ToolCalls == nil && item.ToolCallID == "") {
+			item.Content = blocks
+			if len(item.Content) == 0 {
+				item.Content = []ideContentBlock{{Type: "text"}}
+			}
 		}
 		out = append(out, item)
 	}
 	return out
+}
+
+// ideContentBlocks 把 OpenAI 形 content（字符串或块数组）转为 wire 块：
+// text 块逐个保留；图片块统一成 OpenAI 对象形 image_url（上游实测接受的
+// 唯一形状），Anthropic image / Responses input_image 就地转换。纯文本
+// content 保持单 text 块（与旧压平行为逐字节兼容）。
+func ideContentBlocks(raw json.RawMessage) []ideContentBlock {
+	if len(raw) == 0 {
+		return nil
+	}
+	var asString string
+	if err := json.Unmarshal(raw, &asString); err == nil {
+		return []ideContentBlock{{Type: "text", Text: asString}}
+	}
+	var blocks []map[string]any
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return []ideContentBlock{{Type: "text", Text: contentText(raw)}}
+	}
+	hasImage := false
+	for _, block := range blocks {
+		switch strings.ToLower(anyToString(block["type"])) {
+		case "image_url", "input_image", "image":
+			hasImage = true
+		}
+	}
+	if !hasImage {
+		return []ideContentBlock{{Type: "text", Text: contentText(raw)}}
+	}
+	out := make([]ideContentBlock, 0, len(blocks))
+	for _, block := range blocks {
+		blockType := strings.ToLower(anyToString(block["type"]))
+		switch blockType {
+		case "image_url", "input_image", "image":
+			if url := imageURLFromBlock(blockType, block); url != "" {
+				out = append(out, ideContentBlock{Type: "image_url", ImageURL: &ideImageURL{URL: url}})
+			}
+		default:
+			if text, ok := block["text"].(string); ok && text != "" {
+				out = append(out, ideContentBlock{Type: "text", Text: text})
+			}
+		}
+	}
+	return out
+}
+
+// imageURLFromBlock 从三种图片块形态提取统一 URL（data: 或 http）。
+func imageURLFromBlock(blockType string, block map[string]any) string {
+	switch blockType {
+	case "image": // Anthropic：source.type = base64|url
+		source, _ := block["source"].(map[string]any)
+		if source == nil {
+			return ""
+		}
+		switch strings.ToLower(anyToString(source["type"])) {
+		case "base64":
+			data := strings.Join(strings.Fields(anyToString(source["data"])), "")
+			if data == "" {
+				return ""
+			}
+			media := orDefault(anyToString(source["media_type"]), defaultImageMIME)
+			return "data:" + media + ";base64," + data
+		case "url":
+			return anyToString(source["url"])
+		}
+		return ""
+	case "input_image": // Responses：image_url 直接是字符串
+		return anyToString(block["image_url"])
+	default: // OpenAI：image_url 是对象或字符串
+		switch image := block["image_url"].(type) {
+		case map[string]any:
+			return anyToString(image["url"])
+		case string:
+			return image
+		}
+		return anyToString(block["url"])
+	}
 }
 
 // ideWireToolCalls 把 OpenAI 形 tool_calls（function 键）转换为上游

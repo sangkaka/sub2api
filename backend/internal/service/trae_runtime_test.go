@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"io"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -616,12 +617,11 @@ func TestForwardTraeChatCompletionsIDEFirstFallsBackToRemote(t *testing.T) {
 	require.True(t, svc.traePrefersRemote(newTraeTestAccount().ID, "DeepSeek-V4-Flash"))
 }
 
-// 图片附件（PR-3.2 renderer media parts）2026-10-30 实测为带毒路径：Remote
-// 会话回 200 但模型读不到图（沙箱 /workspace/.uploads 为空，三模型同测）。
-// 默认必须干净 400 拒绝；仅当账号 credentials.allow_remote_images=true
-// （上游修复后的运营开关）才透传 Remote——此时即使模型 IDE 可服务也不得
-// 走 IDE（丢图）。
-func TestForwardTraeChatCompletionsMediaRejectedByDefault(t *testing.T) {
+// 图片（2026-10-31 重定性）：Remote renderer 形上游不收（带毒 200），正路是
+// IDE/v2 线透传 OpenAI 形 image_url 块。账号凭据 ide_image_models 名单外的
+// 模型干净 400；名单内的模型带图走 IDE 线、上游请求体里必须携带 image_url
+// 对象块（不得压平成纯文本、不得改道 Remote）。
+func TestForwardTraeChatCompletionsMediaRejectedWithoutAllowlist(t *testing.T) {
 	var ideHits, remoteSessionHits int
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
@@ -650,44 +650,38 @@ func TestForwardTraeChatCompletionsMediaRejectedByDefault(t *testing.T) {
 			"role": "user",
 			"content": []map[string]any{
 				{"type": "text", "text": "看图"},
-				{"type": "image_url", "image_url": map[string]any{"url": "https://example.com/a.png"}},
+				{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,iVBOR"}},
 			},
 		}},
 	})
 	c, rec := traeTestContext()
 	_, err := svc.forwardTraeChatCompletions(context.Background(), c, newTraeTestAccount(), body, "GLM-5.3")
-	require.Error(t, err, "默认必须拒绝带图请求而不是透传 Remote")
-	require.Equal(t, http.StatusBadRequest, rec.Code, "干净 400 而非带毒 200")
-	require.Contains(t, rec.Body.String(), "image inputs are not supported")
-	require.Equal(t, 0, ideHits, "拒绝发生在任何上游调用之前")
-	require.Equal(t, 0, remoteSessionHits, "拒绝发生在任何上游调用之前")
+	require.Error(t, err, "名单外模型必须干净 400")
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "ide_image_models")
+	require.Equal(t, 0, ideHits)
+	require.Equal(t, 0, remoteSessionHits)
 }
 
-func TestForwardTraeChatCompletionsMediaOptInForcesRemote(t *testing.T) {
+func TestForwardTraeChatCompletionsMediaAllowlistedRoutesIDE(t *testing.T) {
 	var ideHits, remoteSessionHits int
+	var ideBody string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"data":{"list":[{"function":"solo_agent_remote","models":[
-			{"config_name":"GLM-5.3","provider":"zhipu","config_source":1,"is_preset":true}
+			{"config_name":"doubao-seed-evolving","provider":"bytedance","config_source":1,"is_preset":true}
 		]}]}}`)
 	})
 	mux.HandleFunc("/api/remote/v1/chat_sessions", func(w http.ResponseWriter, r *http.Request) {
 		remoteSessionHits++
 		fmt.Fprint(w, `{"data":{"chat_session_id":"s-1","message_id":"m-1"}}`)
 	})
-	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/events", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, strings.Join([]string{
-			`event: plan_item` + "\n" + `data: {"id":"p1","reasoning_content":"","content":"image ok"}` + "\n\n",
-			`event: token_usage` + "\n" + `data: {"prompt_tokens":4,"output_tokens":2}` + "\n\n",
-			"event: done\ndata: [DONE]\n\n",
-		}, ""))
-	})
-	mux.HandleFunc("/api/remote/v1/chat_sessions/s-1/stop", func(w http.ResponseWriter, r *http.Request) {})
 	mux.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
 		ideHits++
+		raw, _ := io.ReadAll(r.Body)
+		ideBody = string(raw)
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "event: output\ndata: {\"response\":\"via ide\"}\n\n")
+		fmt.Fprint(w, "event: output\ndata: {\"response\":\"红色\"}\n\n")
 	})
 	upstream := httptest.NewServer(mux)
 	defer upstream.Close()
@@ -696,24 +690,26 @@ func TestForwardTraeChatCompletionsMediaOptInForcesRemote(t *testing.T) {
 	isolateTraeChannelPrefs(t)
 
 	acct := newTraeTestAccount()
-	acct.Credentials["allow_remote_images"] = true
+	acct.Credentials["ide_image_models"] = "doubao-seed-evolving"
 
 	body, _ := json.Marshal(map[string]any{
-		"model": "GLM-5.3",
+		"model": "doubao-seed-evolving",
 		"messages": []map[string]any{{
 			"role": "user",
 			"content": []map[string]any{
-				{"type": "text", "text": "看图"},
-				{"type": "image_url", "image_url": map[string]any{"url": "https://example.com/a.png"}},
+				{"type": "text", "text": "什么颜色"},
+				{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,iVBOR0KGgo"}},
 			},
 		}},
 	})
 	c, rec := traeTestContext()
-	_, err := svc.forwardTraeChatCompletions(context.Background(), c, acct, body, "GLM-5.3")
+	_, err := svc.forwardTraeChatCompletions(context.Background(), c, acct, body, "doubao-seed-evolving")
 	require.NoError(t, err)
-	require.Contains(t, rec.Body.String(), "image ok")
-	require.Equal(t, 0, ideHits, "带图请求不得走 IDE（丢图）")
-	require.Equal(t, 1, remoteSessionHits)
+	require.Contains(t, rec.Body.String(), "红色")
+	require.Equal(t, 1, ideHits, "名单内带图走 IDE 线")
+	require.Equal(t, 0, remoteSessionHits, "带图不得再改道 Remote（renderer 形带毒）")
+	require.Contains(t, ideBody, `"type":"image_url"`, "上游请求体必须带图片块")
+	require.Contains(t, ideBody, "data:image/png;base64,iVBOR0KGgo")
 }
 
 // llm_utils_chat 双入口：企业域名入口 4023（DeepSeek 系实测）→ 自动改试
