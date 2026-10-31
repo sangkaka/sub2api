@@ -255,6 +255,9 @@ func (s *OpenAIGatewayService) forwardTraeIDETurn(
 	// 空参退化守卫：目标工具有必填参数时，首帧完整 "{}" 参数的回合整体
 	// 作废（客户端未收到任何字节），带矫正提示在同入口重打一次。
 	guardTools := traeToolsRequiringArgs(chatReq.Tools)
+	// 宽松拆包的 schema 门控：schema 声明了 arguments 参数的工具不适用
+	// lenient 兜底（C8 防误伤）。两轮 translator（含重试轮）都要注入。
+	argumentsParamTools := traeToolsWithArgumentsParam(chatReq.Tools)
 	// 名单模型走 v2 新栈（llm_raw_chat + chat_v3 目录绑定）；目录未命中或
 	// 拉取失败回落旧端点，行为不变。
 	var v2Binding trae.V2ModelBinding
@@ -275,9 +278,11 @@ func (s *OpenAIGatewayService) forwardTraeIDETurn(
 		for attempt := 0; attempt < 2; attempt++ {
 			ideReq.Messages = messages
 			translator := trae.NewDegenerateGuardIDETranslator(originalModel, guardTools)
+			translator.ToolsWithArgumentsParam = argumentsParamTools
 			if attempt > 0 {
 				// 重试轮不过滤：结果原样交付，避免无限循环。
 				translator = trae.NewIDETranslator(originalModel)
+				translator.ToolsWithArgumentsParam = argumentsParamTools
 				ideReq.Messages = append(append([]trae.ChatMessage(nil), messages...), traeDegenerateNudgeMessage())
 			}
 			eventsFn := func() (<-chan trae.Event, <-chan error) {
@@ -347,6 +352,32 @@ func traeToolsRequiringArgs(tools []apicompat.ChatTool) map[string]bool {
 		requiring[tool.Function.Name] = true
 	}
 	return requiring
+}
+
+// traeToolsWithArgumentsParam 返回 schema 声明了 arguments 参数的工具名集合
+// （无则 nil）。宽松拆包（lenient 兜底）只对名单外工具启用：单键
+// {"arguments": …} 对这些工具是合法参数形状，不能当包装退化修（C8）。
+func traeToolsWithArgumentsParam(tools []apicompat.ChatTool) map[string]bool {
+	var withParam map[string]bool
+	for _, tool := range tools {
+		if tool.Function == nil || tool.Function.Name == "" || len(tool.Function.Parameters) == 0 {
+			continue
+		}
+		var schema struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal(tool.Function.Parameters, &schema); err != nil || schema.Properties == nil {
+			continue
+		}
+		if _, ok := schema.Properties["arguments"]; !ok {
+			continue
+		}
+		if withParam == nil {
+			withParam = make(map[string]bool)
+		}
+		withParam[tool.Function.Name] = true
+	}
+	return withParam
 }
 
 // traeIDEHostCandidates 返回 llm_utils_chat 的入口尝试顺序：生效缓存

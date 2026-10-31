@@ -572,3 +572,124 @@ func TestIDETranslatorOrphanAndOrderedFragments(t *testing.T) {
 	require.Len(t, result.ToolCalls, 1)
 	require.Equal(t, `{"command":"pwd"}`, result.ToolCalls[0].Arguments)
 }
+
+// escapeAllQuotes 把 " → \"、\ → \\（模型双重编码的「完整」层）。
+func escapeAllQuotes(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		default:
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
+}
+
+// escapeOnlyQuotes 只把 " → \"、反斜杠不动（模型双重编码的「偷懒」层：
+// 2026-10-31 生产实证形态，内层留下 \| 这类 JSON 非法转义）。
+func escapeOnlyQuotes(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '"' {
+			b.WriteString(`\"`)
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+// 2026-10-31 生产事故回归：上游退化把参数包成 {"arguments":"<字符串>"} 且
+// 内层引号过度转义（严格拆包在 json.Unmarshal 失败处放弃、信封漏给客户端
+// 触发 InputValidationError 死循环）。宽松修复须还原出原始对象，bash 里的
+// \| 语义逐字保留。
+func TestIDETranslatorToolCallOverescapedEnvelopeLenientRepaired(t *testing.T) {
+	objText := `{"command":"cd /tmp && git branch -r 2>/dev/null | grep -i 'pending\\|tianshengxi'","description":"check"}`
+	cases := []struct {
+		name  string
+		frame string
+	}{
+		// 完整双重编码：一层 escapeAllQuotes + 整体字符串编码。
+		{"consistent-double-wrap", `{"arguments": ` + strconv.Quote(`"`+escapeAllQuotes(objText)+`"`) + `}`},
+		// 偷懒双重编码（实证形态）：内层反斜杠未转义，留下非法 \ 转义。
+		{"sloppy-double-wrap", `{"arguments": ` + strconv.Quote(`"`+escapeOnlyQuotes(objText)+`"`) + `}`},
+		// 外层截断（丢闭括号）：值 token 完整时可手工抽取再修复。
+		{"truncated-outer", `{"arguments": ` + strconv.Quote(`"`+escapeAllQuotes(objText)+`"`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := NewIDETranslator("m")
+			var streamed []string
+			for _, d := range tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+				"tool_calls": []any{map[string]any{
+					"index": 0, "id": "call_e",
+					"function_call": map[string]any{"name": "Bash", "arguments": tc.frame},
+				}},
+			}}) {
+				for _, c := range d.ToolCalls {
+					if c.Arguments != "" {
+						streamed = append(streamed, c.Arguments)
+					}
+				}
+			}
+			require.Empty(t, streamed, "包装形状片段不得增量下发")
+			result, tail := tr.Finalize(false)
+			require.Len(t, result.ToolCalls, 1)
+			require.Equal(t, objText, result.ToolCalls[0].Arguments)
+			var forwarded string
+			for _, d := range tail {
+				for _, c := range d.ToolCalls {
+					forwarded += c.Arguments
+				}
+			}
+			require.Equal(t, objText, forwarded)
+		})
+	}
+}
+
+// 真 arguments 参数工具（schema 声明）不被宽松修复误伤：严格路径修不了的
+// 偷懒双重编码形状原样透传（C8 边界——单键 arguments 对它是合法参数）。
+func TestIDETranslatorLenientSkippedForArgumentsParamTool(t *testing.T) {
+	objText := `{"a":"x\\|y"}`
+	frame := `{"arguments": ` + strconv.Quote(`"`+escapeOnlyQuotes(objText)+`"`) + `}`
+	tr := NewIDETranslator("m")
+	tr.ToolsWithArgumentsParam = map[string]bool{"Run": true}
+	tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"index": 0, "id": "call_g",
+			"function_call": map[string]any{"name": "Run", "arguments": frame},
+		}},
+	}})
+	result, _ := tr.Finalize(false)
+	require.Equal(t, frame, result.ToolCalls[0].Arguments, "真 arguments 工具：宽松修复必须让位")
+}
+
+// 外层整体非法且值不可恢复（截断在字符串中间）：宽松修复放弃后，兜底把
+// 非法 JSON 替换为 {}——绝不把非法字节发给客户端（客户端解析失败会把整条
+// 流判 malformed，2026-10-31 生产形态）。
+func TestIDETranslatorTruncatedEnvelopeFallsBackToEmptyObject(t *testing.T) {
+	frame := `{"arguments": "\"{\\\"command\\\":\\\"cd /tm`
+	tr := NewIDETranslator("m")
+	tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+		"tool_calls": []any{map[string]any{
+			"index": 0, "id": "call_t",
+			"function_call": map[string]any{"name": "Bash", "arguments": frame},
+		}},
+	}})
+	result, tail := tr.Finalize(false)
+	require.Len(t, result.ToolCalls, 1)
+	require.Equal(t, "{}", result.ToolCalls[0].Arguments)
+	require.True(t, json.Valid([]byte(result.ToolCalls[0].Arguments)))
+	var forwarded string
+	for _, d := range tail {
+		for _, c := range d.ToolCalls {
+			forwarded += c.Arguments
+		}
+	}
+	require.Equal(t, "{}", forwarded)
+	require.True(t, json.Valid([]byte(forwarded)), "客户端拼接结果必须始终是合法 JSON")
+}

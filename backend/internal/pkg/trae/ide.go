@@ -557,6 +557,10 @@ type IDETranslator struct {
 	// ToolsRequiringArgs：有必填参数的工具名集合（{"{}"} 完整参数视为
 	// 退化）。nil 表示不过滤（行为与历史一致）。
 	ToolsRequiringArgs map[string]bool
+	// ToolsWithArgumentsParam：schema 声明了 arguments 参数的工具名集合。
+	// 这些工具的 {"arguments": …} 是合法形状，宽松拆包（lenient 兜底）必须
+	// 让位，防 C8 误伤；严格拆包的既有边界不变。nil 表示无 schema 信息。
+	ToolsWithArgumentsParam map[string]bool
 	// streamedOutput：是否已向客户端下发过 thinking/文本（作废重试的前
 	// 提是客户端未收到任何本回合内容）。
 	streamedOutput bool
@@ -929,9 +933,20 @@ outer:
 				}
 			}
 		}
-		if repaired := repairWrappedToolArguments(acc.args.String()); repaired != acc.args.String() {
+		if repaired := t.repairWrappedToolArgumentsForTool(acc.name, acc.args.String()); repaired != acc.args.String() {
 			acc.args.Reset()
 			acc.args.WriteString(repaired)
+		}
+		// 兜底：拆包后参数仍非合法 JSON（上游退化把外层也写坏，如截断/
+		// 转义错乱）时，绝不把非法字节发给客户端——客户端在 content_block_stop
+		// 处解析失败会把整条流判 malformed（2026-10-31 生产实证）。降级为
+		// 空 {}（可被客户端以普通参数缺失重试），并采样告警。
+		if args := acc.args.String(); strings.TrimSpace(args) != "" && !json.Valid([]byte(args)) {
+			slog.Warn("trae ide tool arguments invalid json; replaced with {}",
+				"model", t.model, "tool", acc.name, "len", len(args),
+				"head", truncate(args, 200))
+			acc.args.Reset()
+			acc.args.WriteString("{}")
 		}
 		id := acc.id
 		if id == "" {
@@ -1056,6 +1071,187 @@ func repairWrappedToolArguments(raw string) string {
 		return raw
 	}
 	return string(val)
+}
+
+// repairWrappedToolArgumentsForTool 在 repairWrappedToolArguments 的严格拆包
+// 之外提供宽松兜底。2026-10-31 生产实证：上游退化把参数包成 {"arguments":
+// "<字符串>"} 且内层转义错乱（引号过度转义 + \| 等非法转义）或外层 JSON 本身
+// 截断时，严格路径在 json.Unmarshal 失败处原样返回，信封直接漏给客户端，
+// 触发 InputValidationError→历史污染→模型模仿的死循环。宽松路径仅对 schema
+// 未声明 arguments 参数的工具启用（真 arguments 工具的该形状是合法参数，
+// C8 不误伤）；修复成功返回还原后的对象，任何一步失败返回原文，不丢字节。
+func (t *IDETranslator) repairWrappedToolArgumentsForTool(toolName, raw string) string {
+	if repaired := repairWrappedToolArguments(raw); repaired != raw {
+		return repaired
+	}
+	if t.ToolsWithArgumentsParam[toolName] {
+		return raw
+	}
+	return repairWrappedToolArgumentsLenient(raw)
+}
+
+// repairWrappedToolArgumentsLenient 宽松拆包：外层非法时手工抠出 arguments
+// 字符串值；内层解析失败时按「去一层引号转义 / 非法转义合法化」修复后再解析。
+func repairWrappedToolArgumentsLenient(raw string) string {
+	body := strings.TrimSpace(raw)
+	if !bytes.HasPrefix([]byte(body), wrapperKeyPrefix) {
+		return raw
+	}
+	var candidates []string
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &obj); err == nil && len(obj) == 1 {
+		if val, ok := obj["arguments"]; ok {
+			candidates = append(candidates, string(val))
+		}
+	}
+	if len(candidates) == 0 {
+		if tok, ok := extractWrappedArgumentsStringToken(body); ok {
+			candidates = append(candidates, tok)
+		}
+	}
+	for _, tok := range candidates {
+		if repaired := lenientUnwrapStringToken(tok, 3); repaired != "" {
+			return repaired
+		}
+	}
+	return raw
+}
+
+// lenientUnwrapStringToken 反复解码字符串 token（最多 depth 层）。每层先按
+// 原文尝试对象解析，失败后依次尝试「去引号转义」「非法转义合法化」「两者
+// 叠加」——对应模型双重编码时的两类损伤（引号多转一层、\| 等未按 JSON 规则
+// 转义）。命中合法 JSON 对象即返回其原文，否则继续向内层走。
+func lenientUnwrapStringToken(tok string, depth int) string {
+	cur := tok
+	for i := 0; i < depth; i++ {
+		var s string
+		if json.Unmarshal([]byte(cur), &s) != nil {
+			return ""
+		}
+		trimmed := strings.TrimSpace(s)
+		for _, candidate := range []string{
+			trimmed,
+			jsonQuoteDeescape(trimmed),
+			legalizeInvalidEscapes(trimmed),
+			legalizeInvalidEscapes(jsonQuoteDeescape(trimmed)),
+		} {
+			if parsed, ok := parseJSONObjectText(candidate); ok {
+				return parsed
+			}
+		}
+		cur = trimmed
+	}
+	return ""
+}
+
+// parseJSONObjectText 校验文本是合法 JSON 且为对象，原样返回。
+func parseJSONObjectText(s string) (string, bool) {
+	if !json.Valid([]byte(s)) {
+		return "", false
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(s), &obj); err != nil {
+		return "", false
+	}
+	return s, true
+}
+
+// jsonQuoteDeescape 去掉一层「结构性引号转义」：\"→"、\\→\；其余转义序列
+// （\n、\t、\uXXXX、\| …）原样保留。模型多重编码产生的过度转义对象文本
+// （{\"command\":…}）经它还原为可解析的 {"command":…}。
+func jsonQuoteDeescape(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case '"':
+				b.WriteByte('"')
+				i++
+			case '\\':
+				b.WriteByte('\\')
+				i++
+			default:
+				b.WriteByte(c)
+			}
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
+}
+
+// legalizeInvalidEscapes 把字符串里非法的 JSON 转义 \X（X 不在 "\\/bfnrtu，
+// \u 后非四位十六进制）改写为 \\X（字面反斜杠 + X）。bash 参数里的 \| \; 等
+// 经此保留原语义并使 JSON 合法（正确编码下它们本就该写作 \\| \\;）。
+func legalizeInvalidEscapes(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c != '\\' || i+1 >= len(s) {
+			b.WriteByte(c)
+			continue
+		}
+		next := s[i+1]
+		switch next {
+		case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+			b.WriteByte(c)
+			b.WriteByte(next)
+			i++
+		case 'u':
+			if i+5 < len(s) && isHexQuad(s[i+2:i+6]) {
+				b.WriteByte(c)
+			} else {
+				b.WriteString(`\\`)
+			}
+		default:
+			b.WriteString(`\\`)
+		}
+	}
+	return b.String()
+}
+
+func isHexQuad(s string) bool {
+	for i := 0; i < len(s); i++ {
+		switch {
+		case s[i] >= '0' && s[i] <= '9', s[i] >= 'a' && s[i] <= 'f', s[i] >= 'A' && s[i] <= 'F':
+		default:
+			return false
+		}
+	}
+	return len(s) == 4
+}
+
+// extractWrappedArgumentsStringToken 从可能整体非法（截断/转义错乱）的
+// {"arguments": "<value>"} 文本中手工抽取 value 的字符串 token（含首尾
+// 引号）。只认 {"arguments" 前缀与首个未转义闭引号，不要求外层结构完整。
+func extractWrappedArgumentsStringToken(body string) (string, bool) {
+	rest := strings.TrimLeft(strings.TrimPrefix(body, `{"arguments"`), " \t\r\n")
+	if !strings.HasPrefix(rest, ":") {
+		return "", false
+	}
+	rest = strings.TrimLeft(rest[1:], " \t\r\n")
+	if !strings.HasPrefix(rest, `"`) {
+		return "", false
+	}
+	esc := false
+	for i := 1; i < len(rest); i++ {
+		c := rest[i]
+		if esc {
+			esc = false
+			continue
+		}
+		if c == '\\' {
+			esc = true
+			continue
+		}
+		if c == '"' {
+			return rest[:i+1], true
+		}
+	}
+	return "", false
 }
 
 // MapIDEUsage 解析 llm_utils_chat 的扁平 token_usage（键名兼容
