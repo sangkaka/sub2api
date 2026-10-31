@@ -9,7 +9,7 @@ const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // 上游（Wei-Shaw）自有文件保持上游实现不改写：其自带 spec
 // （AdminAccessKeysSettings.spec.ts）依赖原生 multiple <select> 与 window.confirm，
 // fork 侧改组件会连带重写上游 spec，每次同步上游都得重来。仅豁免这些文件。
-const UPSTREAM_OWNED_NATIVE = new Set(['AdminAccessKeysSettings.vue'])
+const UPSTREAM_OWNED_NATIVE = new Set(['AdminAccessKeysSettings.vue', 'MCPOAuthAuthorizeView.vue'])
 
 function collectProductionSources(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
