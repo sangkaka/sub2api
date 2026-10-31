@@ -588,6 +588,11 @@ type ChatCompletionsToAnthropicStreamState struct {
 	// as trailing blocks at finalize.
 	deferredNonTool []deferredNonToolDelta
 
+	// LateToolArgFragmentsDropped：因所属工具块已被后续块关闭而无法合法投递、
+	// 被丢弃的参数分片计数（供运行层采样告警）；LateToolArgSample 为首个样本。
+	LateToolArgFragmentsDropped int
+	LateToolArgSample           string
+
 	// Reasoning (DeepSeek-style): reasoning_content streamed before content.
 	// No separate reasoning block index — it uses ContentBlockIndex like the
 	// Responses bridge's ReasoningIndex, but since blocks are sequential we
@@ -888,21 +893,39 @@ func handleCCAnthropicToolCall(state *ChatCompletionsToAnthropicStreamState, too
 			blockIdx := state.toolBlockIndex[idx]
 			if state.ContentBlockOpen && blockIdx == state.ContentBlockIndex {
 				state.CurrentToolHadDelta = true
+				events = append(events, AnthropicStreamEvent{
+					Type:  "content_block_delta",
+					Index: &blockIdx,
+					Delta: &AnthropicDelta{
+						Type:        "input_json_delta",
+						PartialJSON: toolCall.Function.Arguments,
+					},
+				})
+			} else {
+				// 该工具块已被后续块的宣布关闭（Anthropic 块严格顺序，不可重开）。
+				// 向已关闭块补 input_json_delta 会让严格校验的客户端（Claude Code
+				// "event referenced an already-closed content block"）把整条流判
+				// malformed——2026-10-31 生产实证。迟到分片无法合法投递：计数采样
+				// 后丢弃，块保持收尾时的参数（无 delta 的工具块由 close 兜底 "{}"）。
+				state.LateToolArgFragmentsDropped++
+				if state.LateToolArgSample == "" {
+					state.LateToolArgSample = truncateForSample(toolCall.Function.Arguments, 120)
+				}
 			}
-			events = append(events, AnthropicStreamEvent{
-				Type:  "content_block_delta",
-				Index: &blockIdx,
-				Delta: &AnthropicDelta{
-					Type:        "input_json_delta",
-					PartialJSON: toolCall.Function.Arguments,
-				},
-			})
 		} else {
 			state.pendingToolArgs[idx] += toolCall.Function.Arguments
 		}
 	}
 
 	return events
+}
+
+// truncateForSample 截断采样文本，防日志爆行。
+func truncateForSample(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // announceCCAnthropicToolBlock assigns the next Anthropic block index to the

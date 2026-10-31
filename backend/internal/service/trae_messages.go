@@ -247,6 +247,15 @@ func (w *traeAnthropicWriter) Finish() error {
 			}
 		}
 		w.ResponseWriter.Flush()
+		if w.state.LateToolArgFragmentsDropped > 0 {
+			// 迟到参数分片被丢弃（工具块已被后续块关闭，协议禁止补 delta）。
+			// 丢弃保住了流合法性（客户端不再判 malformed），代价是该工具参数
+			// 不完整——采样留证，供上游形态分析。
+			logger.L().Warn("trae anthropic bridge dropped late tool arg fragments",
+				zap.Int("fragments", w.state.LateToolArgFragmentsDropped),
+				zap.String("sample", w.state.LateToolArgSample),
+				zap.String("model", w.model))
+		}
 		return nil
 	}
 	var ccResp apicompat.ChatCompletionsResponse
