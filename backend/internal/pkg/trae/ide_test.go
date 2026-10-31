@@ -693,3 +693,40 @@ func TestIDETranslatorTruncatedEnvelopeFallsBackToEmptyObject(t *testing.T) {
 	require.Equal(t, "{}", forwarded)
 	require.True(t, json.Valid([]byte(forwarded)), "客户端拼接结果必须始终是合法 JSON")
 }
+
+// 2026-10-31 晚抽检变体回归：三层/四层转义包装（16 时段生产实证，超出原
+// 双重编码设计），且落在并行双调用的第二个上——两路都要还原出原始对象。
+func TestIDETranslatorDeepWrapEnvelopeRepaired(t *testing.T) {
+	objText := `{"command":"cd /tmp && grep -i 'pending\\|tianshengxi' f","description":"check"}`
+	enc := func(s string) string {
+		b, err := json.Marshal(s)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		return string(b)
+	}
+	cases := []struct {
+		name  string
+		frame string
+	}{
+		{"triple-wrap", `{"arguments": ` + enc(enc(enc(objText))) + `}`},
+		{"quad-wrap", `{"arguments": ` + enc(enc(enc(enc(objText)))) + `}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := NewIDETranslator("m")
+			tr.ProcessEvent(Event{Name: "output", Data: map[string]any{
+				"tool_calls": []any{
+					map[string]any{"index": 0, "id": "call_p0",
+						"function_call": map[string]any{"name": "Bash", "arguments": `{"command":"echo first"}`}},
+					map[string]any{"index": 1, "id": "call_p1",
+						"function_call": map[string]any{"name": "Bash", "arguments": tc.frame}},
+				},
+			}})
+			result, _ := tr.Finalize(false)
+			require.Len(t, result.ToolCalls, 2)
+			require.Equal(t, `{"command":"echo first"}`, result.ToolCalls[0].Arguments)
+			require.Equal(t, objText, result.ToolCalls[1].Arguments, "深层包装必须剥到原始对象")
+		})
+	}
+}

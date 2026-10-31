@@ -1035,9 +1035,10 @@ func (t *IDETranslator) Finalize(streamEndedWithoutDone bool) (*TurnResult, []De
 }
 
 // repairWrappedToolArguments 拆掉模型模仿 function_call 信封产生的
-// {"arguments":"<JSON 字符串>"} 包装：单键 arguments、值为字符串（可叠
-// 1~2 层 JSON 字符串转义）、最内层为 JSON 对象时取最内层对象；其它形状
-// 原样返回（含真实以 arguments 为参数的工具）。
+// {"arguments":"<JSON 字符串>"} 包装：单键 arguments、值为字符串（可叠多层
+// JSON 字符串转义——2026-10-31 晚抽检实证三层以上变体，故循环剥到固定点）、
+// 最内层为 JSON 对象时取最内层对象；其它形状原样返回（含真实以 arguments
+// 为参数的工具）。
 func repairWrappedToolArguments(raw string) string {
 	body := strings.TrimSpace(raw)
 	if !bytes.HasPrefix([]byte(body), wrapperKeyPrefix) {
@@ -1051,7 +1052,7 @@ func repairWrappedToolArguments(raw string) string {
 	if !ok {
 		return raw
 	}
-	for i := 0; i < 3; i++ {
+	for i := 0; i < maxWrapUnwrapDepth; i++ {
 		var s string
 		if json.Unmarshal(val, &s) != nil {
 			break
@@ -1072,6 +1073,10 @@ func repairWrappedToolArguments(raw string) string {
 	}
 	return string(val)
 }
+
+// maxWrapUnwrapDepth 是信封字符串剥层上限（防病态嵌套滥用），覆盖实证的
+// 1~4 层退化并留余量。
+const maxWrapUnwrapDepth = 6
 
 // repairWrappedToolArgumentsForTool 在 repairWrappedToolArguments 的严格拆包
 // 之外提供宽松兜底。2026-10-31 生产实证：上游退化把参数包成 {"arguments":
@@ -1110,7 +1115,7 @@ func repairWrappedToolArgumentsLenient(raw string) string {
 		}
 	}
 	for _, tok := range candidates {
-		if repaired := lenientUnwrapStringToken(tok, 3); repaired != "" {
+		if repaired := lenientUnwrapStringToken(tok, maxWrapUnwrapDepth); repaired != "" {
 			return repaired
 		}
 	}
