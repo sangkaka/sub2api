@@ -46,3 +46,24 @@ func TestIDEContentBlocks_EmptyAndInvalid(t *testing.T) {
 	// 非法 JSON 走 contentText 兜底（空串单块）
 	require.Len(t, ideContentBlocks(json.RawMessage(`{oops`)), 1)
 }
+
+func TestModelDescriptorSupportsImage(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  map[string]any
+		want bool
+	}{
+		{"顶层multimodal真", map[string]any{"multimodal": true}, true},
+		{"顶层support_read_image假胜出", map[string]any{"support_read_image": false, "multimodal": true}, false},
+		{"features为JSON字符串", map[string]any{"features": `{"multimodal":{"enable":true}}`}, true},
+		{"features为对象", map[string]any{"features": map[string]any{"multimodal": map[string]any{"enable": false}}}, false},
+		{"无标志默认假", map[string]any{"name": "x"}, false},
+		{"nil安全", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &ModelDescriptor{Raw: tc.raw}
+			require.Equal(t, tc.want, d.SupportsImage())
+		})
+	}
+}

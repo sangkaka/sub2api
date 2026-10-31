@@ -63,7 +63,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaTrae(
 	// 把 base64 当文本烧上下文）。必须先于 interposer 包 writer 写出
 	// Anthropic 形 400——runtime 层写出的 OpenAI 形错误体会被拦截 writer
 	// 吞掉（见下方错误路径注释）。
-	if anthropicBodyHasImageBlocks(body) && !isTraeImageModel(account, anthropicReq.Model, originalModel) {
+	if anthropicBodyHasImageBlocks(body) && !s.traeImageAllowed(ctx, account, anthropicReq.Model, originalModel) {
 		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error",
 			"image inputs are not supported for model "+originalModel+" on the trAE upstream: only models enabled via ide_image_models (verified multimodal) accept images; remove image blocks or switch to an enabled model")
 		return nil, fmt.Errorf("trAE upstream does not support image inputs (model %s)", originalModel)

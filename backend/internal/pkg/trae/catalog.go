@@ -246,3 +246,83 @@ func positiveIntFrom(v any) int {
 	}
 	return 0
 }
+
+// SupportsImage 报告 descriptor 声明的图片输入能力。语义与 Trae2api-cn
+// 对齐（2026-10-31）：顶层 support_read_image / multimodal 显式布尔优先
+// （false 胜出），其次 features（上游可能给 JSON 字符串或对象）里的
+// multimodal.enable。注意能力按 (function, model) 声明且档位不一致——
+// 调用方应使用 agent 档（solo_agent_remote）的 descriptor。
+func (m *ModelDescriptor) SupportsImage() bool {
+	if m == nil || m.Raw == nil {
+		return false
+	}
+	for _, key := range []string{"support_read_image", "multimodal"} {
+		if v, ok := m.Raw[key].(bool); ok {
+			return v
+		}
+	}
+	var features map[string]any
+	switch raw := m.Raw["features"].(type) {
+	case map[string]any:
+		features = raw
+	case string:
+		var parsed map[string]any
+		if json.Unmarshal([]byte(raw), &parsed) == nil {
+			features = parsed
+		}
+	}
+	if features == nil {
+		return false
+	}
+	switch multimodal := features["multimodal"].(type) {
+	case map[string]any:
+		if v, ok := multimodal["enable"].(bool); ok {
+			return v
+		}
+	case bool:
+		return multimodal
+	}
+	return false
+}
+
+// FetchAgentModels 只拉 agent 档（solo_agent_remote）目录。图片能力判定
+// 必须用这一档：上游按档位声明 multimodal，work 档普遍比 agent 档保守
+// （glm-5.3-flash work=false / agent=true，2026-10-31 实测），多档合并
+// 首见优先会拿 work 档的 false 误杀。
+func (c *Client) FetchAgentModels(ctx context.Context, token string) ([]*ModelDescriptor, error) {
+	url := c.remoteBase() + modelsPath + "?functions=solo_agent_remote&show_custom_model=true"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setRemoteHeaders(req, token, false)
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("trae: fetch agent models: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, fmt.Errorf("trae: fetch agent models read body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, &UpstreamError{
+			Kind:    classifyHTTPError(resp.StatusCode),
+			Code:    fmt.Sprintf("%d", resp.StatusCode),
+			Message: fmt.Sprintf("agent models [%d]: %s", resp.StatusCode, truncate(string(raw), 300)),
+		}
+	}
+	var parsed catalogResponse
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("trae: fetch agent models parse: %w", err)
+	}
+	out := make([]*ModelDescriptor, 0, 16)
+	for _, group := range parsed.Data.List {
+		for _, entry := range group.Models {
+			if descriptor := parseModelDescriptor(entry); descriptor != nil {
+				out = append(out, descriptor)
+			}
+		}
+	}
+	return out, nil
+}

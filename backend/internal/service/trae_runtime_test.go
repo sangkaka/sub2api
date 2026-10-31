@@ -968,3 +968,54 @@ func TestForwardTraeChatCompletionsV2Routing(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, legacyHits, "名单外模型走旧端点")
 }
+
+// 动态图片判定：agent 档目录 multimodal=true 的模型（不在 csv）带图放行走
+// IDE 线；multimodal=false 的模型仍干净 400。csv 覆盖优先级最高。
+func TestForwardTraeChatCompletionsMediaDynamicDescriptor(t *testing.T) {
+	var ideHits int
+	var ideBody string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		// agent 档目录：deepseek-v4.1-flash multimodal=true（2026-10-31 实证真视觉）
+		fmt.Fprint(w, `{"data":{"list":[{"function":"solo_agent_remote","models":[
+			{"name":"deepseek-v4.1-flash","multimodal":true,"config_source":1,"is_preset":true},
+			{"name":"glm-5.3","multimodal":false,"config_source":1,"is_preset":true}
+		]}]}}`)
+	})
+	mux.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		ideHits++
+		raw, _ := io.ReadAll(r.Body)
+		ideBody = string(raw)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: output\ndata: {\"response\":\"红色\"}\n\n")
+	})
+	upstream := httptest.NewServer(mux)
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL, ModelGatewayHost: upstream.URL}
+	isolateTraeChannelPrefs(t)
+
+	imgMsgs := func() []map[string]any {
+		return []map[string]any{{
+			"role": "user",
+			"content": []map[string]any{
+				{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,iVBOR"}},
+				{"type": "text", "text": "什么颜色"},
+			},
+		}}
+	}
+	// deepseek：目录声明 multimodal=true → 放行
+	body, _ := json.Marshal(map[string]any{"model": "deepseek-v4.1-flash", "messages": imgMsgs()})
+	c, rec := traeTestContext()
+	_, err := svc.forwardTraeChatCompletions(context.Background(), c, newTraeTestAccount(), body, "deepseek-v4.1-flash")
+	require.NoError(t, err)
+	require.Contains(t, rec.Body.String(), "红色")
+	require.Contains(t, ideBody, `"type":"image_url"`)
+	require.Equal(t, 1, ideHits)
+	// glm-5.3：目录声明 multimodal=false → 干净 400
+	body2, _ := json.Marshal(map[string]any{"model": "glm-5.3", "messages": imgMsgs()})
+	c2, rec2 := traeTestContext()
+	_, err2 := svc.forwardTraeChatCompletions(context.Background(), c2, newTraeTestAccount(), body2, "glm-5.3")
+	require.Error(t, err2)
+	require.Equal(t, http.StatusBadRequest, rec2.Code)
+}

@@ -297,3 +297,19 @@ func envOr(k, def string) string {
 	}
 	return def
 }
+
+
+func TestProbeDeepseekVision(t *testing.T) {
+	token := os.Getenv("TRAE_PROBE_TOKEN")
+	img := os.Getenv("TRAE_PROBE_IMG2")
+	if token == "" || img == "" {
+		t.Skip("需要 TRAE_PROBE_TOKEN / TRAE_PROBE_IMG2")
+	}
+	gw := envOr("TRAE_PROBE_GATEWAY", DefaultModelGatewayHost)
+	textBlock := map[string]any{"type": "text", "text": "图片中央的大方块是什么颜色？只答一个词，不许猜"}
+	openaiImg := map[string]any{"type": "image_url", "image_url": map[string]any{
+		"url": "data:image/png;base64," + img}}
+	t.Run("gw-deepseek-终局", func(t *testing.T) {
+		probeSend(t, gw, ideChatPath, false, ideFunction, "deepseek-v4.1-flash", nil, []any{openaiImg, textBlock})
+	})
+}

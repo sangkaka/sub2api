@@ -115,7 +115,7 @@ func (s *OpenAIGatewayService) forwardTraeChatCompletions(
 	// 请求只对账号凭据 ide_image_models 名单内的模型放行透传，名单外干净
 	// 400——非多模态模型放行只会把 base64 当文本烧上下文。
 	hasMediaParts := len(trae.MediaQueryParts(toTraeMessages(chatReq.Messages))) > 0
-	if hasMediaParts && !isTraeImageModel(account, originalModel, upstreamModel) {
+	if hasMediaParts && !s.traeImageAllowed(ctx, account, originalModel, upstreamModel) {
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error",
 			"image inputs are not supported for model "+originalModel+" on the trAE upstream: only models enabled via ide_image_models (verified multimodal) accept images; remove image blocks or switch to an enabled model")
 		return nil, errors.New("trAE upstream does not support image inputs (model " + originalModel + ")")
@@ -1166,6 +1166,47 @@ func (s *OpenAIGatewayService) traeV2BindingFor(ctx context.Context, client *tra
 		}
 	}
 	return trae.V2ModelBinding{}, false
+}
+
+// traeImageAllowed 判定带图请求是否放行：①账号凭据 ide_image_models 名单
+// （显式运营覆盖，最高优先）；②agent 档目录 descriptor 声明的官方
+// multimodal 能力（2026-10-31 探测实证：deepseek-v4.1-flash / doubao 全系 /
+// minimax-m3 / qwen3.8-max / kimi 系标志与真实视觉一致；glm-5.3 系标志
+// false 也与「b64 当文本」实测一致）。目录拉取失败按未声明处理，仅 csv
+// 生效——能力判定失败时宁可保守拒绝。
+func (s *OpenAIGatewayService) traeImageAllowed(ctx context.Context, account *Account, originalModel, upstreamModel string) bool {
+	if isTraeImageModel(account, originalModel, upstreamModel) {
+		return true
+	}
+	if s.traeTokenProvider == nil {
+		return false
+	}
+	token, err := s.traeTokenProvider.GetAccessToken(ctx, account)
+	if err != nil {
+		return false
+	}
+	client := s.traeClientForAccount(ctx, account)
+	descriptor := s.traeAgentDescriptor(ctx, client, account, token, upstreamModel)
+	return descriptor != nil && descriptor.SupportsImage()
+}
+
+// traeAgentDescriptor 取 agent 档 descriptor（按账号缓存，miss 拉上游）。
+// 命中失败返回 nil（区别于错误：能力未知按不支持处理）。
+func (s *OpenAIGatewayService) traeAgentDescriptor(ctx context.Context, client *trae.Client, account *Account, token, model string) *trae.ModelDescriptor {
+	// 独立缓存：与多档合并的 traeCatalog 分开，避免 mustRemote 先行填充
+	// 合并目录（首见=work 档）后，图片能力误读 work 档的保守标志。
+	if s.traeAgentCatalog == nil {
+		s.traeAgentCatalog = &traeRuntimeCatalog{}
+	}
+	if cached := s.traeAgentCatalog.get(account.ID); cached != nil {
+		return cached[model]
+	}
+	descriptors, err := client.FetchAgentModels(ctx, token)
+	if err != nil {
+		return nil
+	}
+	s.traeAgentCatalog.put(account.ID, descriptors)
+	return s.traeAgentCatalog.get(account.ID)[model]
 }
 
 // isTraeForcedRemote 判定账号级模型名单 force_remote_models（逗号分隔，
