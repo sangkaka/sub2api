@@ -58,16 +58,6 @@ func (s *OpenAIGatewayService) forwardAnthropicViaTrae(
 		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return nil, fmt.Errorf("missing model in request")
 	}
-	// 图片白名单（2026-10-31 重定性）：IDE/v2 线透传 OpenAI 形 image_url
-	// 块、v2 多模态模型实证真读到图；名单外模型干净 400（非多模态放行只会
-	// 把 base64 当文本烧上下文）。必须先于 interposer 包 writer 写出
-	// Anthropic 形 400——runtime 层写出的 OpenAI 形错误体会被拦截 writer
-	// 吞掉（见下方错误路径注释）。
-	if anthropicBodyHasImageBlocks(body) && !s.traeImageAllowed(ctx, account, anthropicReq.Model, originalModel) {
-		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error",
-			"image inputs are not supported for model "+originalModel+" on the trAE upstream: only models enabled via ide_image_models (verified multimodal) accept images; remove image blocks or switch to an enabled model")
-		return nil, fmt.Errorf("trAE upstream does not support image inputs (model %s)", originalModel)
-	}
 	applyOpenAICompatModelNormalization(&anthropicReq)
 	clientStream := anthropicReq.Stream
 
@@ -81,6 +71,16 @@ func (s *OpenAIGatewayService) forwardAnthropicViaTrae(
 	}
 	billingModel := resolveOpenAIForwardModel(account, anthropicReq.Model, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	// 图片放行判定（2026-10-31）：csv 覆盖 OR agent 档 descriptor 官方
+	// multimodal 标志。必须在 upstreamModel 解析之后——目录按上游名索引，
+	// 用对外名（如 deepseek-flash-trae）查会 miss 而误拒；且必须先于
+	// interposer 包 writer 写出 Anthropic 形 400（runtime 层的 OpenAI 形
+	// 错误体会被拦截 writer 吞掉）。
+	if anthropicBodyHasImageBlocks(body) && !s.traeImageAllowed(ctx, account, originalModel, upstreamModel) {
+		writeAnthropicError(c, http.StatusBadRequest, "invalid_request_error",
+			"image inputs are not supported for model "+originalModel+" on the trAE upstream: only multimodal-capable models (per the upstream catalog) or ide_image_models overrides accept images; remove image blocks or switch models")
+		return nil, fmt.Errorf("trAE upstream does not support image inputs (model %s)", originalModel)
+	}
 	chatReq.Model = upstreamModel
 	chatReq.ReasoningEffort = openAICompatAnthropicReasoningEffort(&anthropicReq, upstreamModel, chatReq.ReasoningEffort)
 	chatReq.Stream = clientStream

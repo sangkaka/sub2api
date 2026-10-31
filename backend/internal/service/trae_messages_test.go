@@ -412,3 +412,34 @@ func TestForwardAnthropicViaTraeImageRejected(t *testing.T) {
 	_, _ = svc.forwardAnthropicViaTrae(context.Background(), c2, acct, []byte(imgBody), "GLM-5.3")
 	require.NotContains(t, rec2.Body.String(), "image inputs are not supported", "名单命中时不在此层拒绝")
 }
+
+// 别名模型（对外名≠目录上游名）的动态判定回归：deepseek-flash-trae 映射到
+// deepseek-v4.1-flash，agent 档目录按上游名声明 multimodal=true → 图片放行，
+// 不得因用对外名查目录 miss 而误拒（2026-10-31 生产实测教训）。
+func TestForwardAnthropicViaTraeImageAliasModelAllowed(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/remote/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":{"list":[{"function":"solo_agent_remote","models":[
+			{"name":"deepseek-v4.1-flash","multimodal":true,"config_source":1,"is_preset":true}
+		]}]}}`)
+	})
+	mux.HandleFunc("/api/agent/v3/llm_utils_chat", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: output\ndata: {\"response\":\"红色\"}\n\n")
+	})
+	upstream := httptest.NewServer(mux)
+	defer upstream.Close()
+	svc := newTraeTestGateway(t, upstream)
+	svc.traeClient = &trae.Client{RemoteBase: upstream.URL + "/api/remote/v1", CloudIDEHost: upstream.URL, ModelGatewayHost: upstream.URL}
+	isolateTraeChannelPrefs(t)
+
+	acct := newTraeTestAccount()
+	acct.Credentials["model_mapping"] = map[string]any{"deepseek-flash-trae": "deepseek-v4.1-flash"}
+
+	imgBody := `{"model":"deepseek-flash-trae","max_tokens":32,"stream":false,"messages":[{"role":"user","content":[
+		{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBOR"}},
+		{"type":"text","text":"什么颜色"}]}]}`
+	c, rec := traeTestContext()
+	_, _ = svc.forwardAnthropicViaTrae(context.Background(), c, acct, []byte(imgBody), "deepseek-flash-trae")
+	require.NotContains(t, rec.Body.String(), "image inputs are not supported", "别名模型按上游名命中目录能力后必须放行")
+}
